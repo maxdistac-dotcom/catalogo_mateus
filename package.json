@@ -1,0 +1,13 @@
+{
+  "name": "mateus-disponiveis",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 login",
+    "scrape": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 scrape",
+    "scrape:no-images": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 scrape --no-images",
+    "scrape:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 scrape --no-images --no-probe",
+    "test:samples": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 parse-samples"
+  }
+}

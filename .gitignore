@@ -1,0 +1,4 @@
+dados/
+saida/
+node_modules/
+*.log

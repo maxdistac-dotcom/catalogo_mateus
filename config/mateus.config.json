@@ -1,0 +1,76 @@
+{
+  "baseUrl": "https://mateusmais.com.br/",
+  "marketId": "c77bebc0-a740-4a02-b3b3-c75610b1f595",
+  "timezone": "America/Fortaleza",
+  "headless": true,
+  "availableOnly": true,
+  "downloadImages": true,
+  "maxVerMaisClicks": 35,
+  "waitAfterNavigationMs": 2500,
+  "quantityProbe": {
+    "enabled": true,
+    "maxItemsPerPage": 700,
+    "delayMs": 350
+  },
+  "cart": {
+    "defaultMinQty": 1,
+    "priceRequestTemplate": {
+      "title": "*ALTERAÇÃO DE TELA*",
+      "rca": "RCA: 39305 - Max JDE",
+      "client": "Cliente: *9999999* - NOME FANTASIA OU RAZÃO",
+      "supervisor": "Supervisor: Natan"
+    }
+  },
+  "userDataDir": "dados/chrome-profile",
+  "outputDir": "saida",
+  "sampleHtmlFiles": [
+    "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS.html",
+    "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS - CLIQUE VER MAIS ATE MOSTRAR TUDO.html",
+    "C:/Users/Max/PCODE Scraping Mateus/Mateus Mais - Compre nas lojas do Grupo Mateus - Grupo Mateus FORCA DE VENDAS.html"
+  ],
+  "products": [
+    {
+      "id": "havaianas",
+      "title": "Havaianas",
+      "urlParams": {
+        "brand_name": "HAVAIANAS"
+      },
+      "filter": {
+        "mustContain": ["havaianas"]
+      }
+    },
+    {
+      "id": "sabao_barra_ype_800g",
+      "title": "Sabão em Barra Ypê 800g",
+      "search": "Sabão em Barra Ypê 800g",
+      "filter": {
+        "mustContain": ["sabao", "barra", "ype"],
+        "regex": ["(^|\\D)800\\s*g($|\\D)"]
+      }
+    },
+    {
+      "id": "sabao_po_tixan_ype_sache_400g",
+      "title": "Sabão em Pó Tixan Ypê Sachê 400g",
+      "search": "Tixan Ypê Sachê 400g",
+      "filter": {
+        "mustContain": ["sabao", "po", "tixan", "ype", "sache"],
+        "regex": ["(^|\\D)400\\s*g($|\\D)"]
+      }
+    },
+    {
+      "id": "detergente_ype_500ml",
+      "title": "Detergente Ypê 500ml",
+      "search": "Detergente Ypê 500ml",
+      "filter": {
+        "mustContain": ["detergente", "ype"],
+        "regex": ["(^|\\D)500\\s*ml($|\\D)"]
+      }
+    }
+  ],
+  "telegram": {
+    "enabled": true,
+    "botTokenEnv": "MATEUS_TELEGRAM_BOT_TOKEN",
+    "chatIdEnv": "MATEUS_TELEGRAM_CHAT_ID",
+    "sendFiles": true
+  }
+}
