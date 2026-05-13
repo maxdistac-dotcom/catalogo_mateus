@@ -47,7 +47,7 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Scrape Mateus Mais
-        run: node scripts/mateus-scraper.mjs scrape --no-images
+        run: node scripts/mateus-scraper.mjs scrape
 
       - name: Upload catalog artifact
         uses: actions/upload-artifact@v4

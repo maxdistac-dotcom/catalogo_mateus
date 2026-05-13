@@ -111,6 +111,26 @@ Para não depender do PC ligado, o caminho mais prático é:
 
 Este projeto já inclui o workflow em `.github\workflows\mateus-scrape.yml`.
 
+## PWA e uso offline no celular
+
+O GitHub Pages publica também um PWA:
+
+- `index.html`: abre direto no link do Pages;
+- `manifest.webmanifest`: permite instalar/adicionar à tela inicial;
+- `sw.js`: salva o catálogo, CSV, resumo e imagens no cache do navegador;
+- `imagens\`: imagens baixadas durante a coleta para uso offline.
+
+Como usar no celular:
+
+1. Abra o link do Pages em um local com Wi-Fi ou internet boa.
+2. Aguarde o catálogo carregar e aparecer o aviso de cache offline.
+3. No Chrome/Edge mobile, use `Adicionar à tela inicial` ou `Instalar app`.
+4. Depois disso, abra pelo ícone ou pela aba já carregada mesmo em local com internet ruim.
+
+Quando o workflow gerar um catálogo novo, o PWA baixa a versão nova na próxima vez que você abrir com internet.
+
+Observação: se você rodar `scrape:no-images` ou `scrape:fast`, o catálogo fica leve, mas as imagens não ficam garantidas offline.
+
 ### Preparar sessão para GitHub Actions
 
 Depois de rodar `npm run login` localmente, gere o valor base64 do arquivo de sessão:

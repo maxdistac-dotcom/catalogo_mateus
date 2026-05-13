@@ -1034,18 +1034,29 @@ async function writeOutputs(config, products, meta) {
   const summary = buildSummary(config, products, generatedAt, meta);
   const html = buildCatalogHtml(config, products, summary, generatedAt);
   const csv = buildCsv(products);
+  const manifest = buildWebManifest(config);
+  const serviceWorker = buildServiceWorker(products, generatedAt);
+  const iconSvg = buildIconSvg();
 
   const runFiles = {
     html: path.join(runDir, "catalogo.html"),
+    index: path.join(runDir, "index.html"),
     csv: path.join(runDir, "produtos.csv"),
     json: path.join(runDir, "produtos.json"),
     summary: path.join(runDir, "resumo.txt"),
+    manifest: path.join(runDir, "manifest.webmanifest"),
+    serviceWorker: path.join(runDir, "sw.js"),
+    icon: path.join(runDir, "icon.svg"),
   };
 
   await fs.writeFile(runFiles.html, html, "utf8");
+  await fs.writeFile(runFiles.index, html, "utf8");
   await fs.writeFile(runFiles.csv, "\uFEFF" + csv, "utf8");
   await fs.writeFile(runFiles.json, JSON.stringify({ generatedAt, meta, products }, null, 2), "utf8");
   await fs.writeFile(runFiles.summary, summary, "utf8");
+  await fs.writeFile(runFiles.manifest, manifest, "utf8");
+  await fs.writeFile(runFiles.serviceWorker, serviceWorker, "utf8");
+  await fs.writeFile(runFiles.icon, iconSvg, "utf8");
 
   await publishLatest(outputRoot, runDir, runFiles);
   await maybeSendTelegram(config, summary, [runFiles.html, runFiles.csv]);
@@ -1059,8 +1070,12 @@ async function writeOutputs(config, products, meta) {
 async function publishLatest(outputRoot, runDir, runFiles) {
   await fs.mkdir(outputRoot, { recursive: true });
   await fs.copyFile(runFiles.html, path.join(outputRoot, "catalogo.html"));
+  await fs.copyFile(runFiles.index, path.join(outputRoot, "index.html"));
   await fs.copyFile(runFiles.csv, path.join(outputRoot, "produtos.csv"));
   await fs.copyFile(runFiles.summary, path.join(outputRoot, "resumo.txt"));
+  await fs.copyFile(runFiles.manifest, path.join(outputRoot, "manifest.webmanifest"));
+  await fs.copyFile(runFiles.serviceWorker, path.join(outputRoot, "sw.js"));
+  await fs.copyFile(runFiles.icon, path.join(outputRoot, "icon.svg"));
 
   const latestImagesDir = path.join(outputRoot, "imagens");
   await fs.rm(latestImagesDir, { recursive: true, force: true });
@@ -1239,6 +1254,11 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0478d1">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <title>Mateus Mais - Produtos disponíveis</title>
   <style>
     :root {
@@ -1531,6 +1551,22 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       padding: 14px;
     }
     .hidden { display: none !important; }
+    .pwa-status {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 20;
+      display: none;
+      max-width: min(320px, calc(100vw - 24px));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: 0 10px 30px rgba(23, 32, 51, 0.16);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pwa-status.show { display: block; }
     footer {
       max-width: 1180px;
       margin: 0 auto;
@@ -1598,6 +1634,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     ${groups.map(renderGroup).join("\n")}
   </main>
   <footer>${escapeHtml(summary)}</footer>
+  <div id="pwaStatus" class="pwa-status"></div>
   <script type="application/json" id="products-data">${safeJsonForScript(catalogProducts)}</script>
   <script type="application/json" id="price-template">${safeJsonForScript(priceRequestTemplate)}</script>
   <script>
@@ -1613,6 +1650,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     const cartTotalQty = document.getElementById("cartTotalQty");
     const cartTotalValue = document.getElementById("cartTotalValue");
     const requestText = document.getElementById("requestText");
+    const pwaStatus = document.getElementById("pwaStatus");
     let cart = readCart();
 
     input.addEventListener("input", () => {
@@ -1690,6 +1728,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     });
 
     renderCart();
+    registerOfflineCache();
 
     function addToCart(key) {
       const product = productsByKey.get(key);
@@ -1847,6 +1886,36 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
     }
+
+    async function registerOfflineCache() {
+      if (!("serviceWorker" in navigator)) {
+        return;
+      }
+      try {
+        const registration = await navigator.serviceWorker.register("sw.js");
+        if (navigator.serviceWorker.controller) {
+          showPwaStatus("Catálogo preparado para uso offline neste aparelho.");
+        } else {
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            showPwaStatus("Catálogo preparado para uso offline neste aparelho.");
+          }, { once: true });
+        }
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      } catch {
+        // The catalog still works online if service worker registration is blocked.
+      }
+    }
+
+    function showPwaStatus(message) {
+      if (!pwaStatus) {
+        return;
+      }
+      pwaStatus.textContent = message;
+      pwaStatus.classList.add("show");
+      window.setTimeout(() => pwaStatus.classList.remove("show"), 6000);
+    }
   </script>
 </body>
 </html>`;
@@ -1895,6 +1964,146 @@ function renderProductCard(product) {
     </div>
   </div>
 </article>`;
+}
+
+function buildWebManifest(config) {
+  return `${JSON.stringify(
+    {
+      name: "Mateus Mais - Catálogo",
+      short_name: "Mateus Catálogo",
+      description: "Catálogo offline de produtos disponíveis no Força de Vendas.",
+      start_url: "./",
+      scope: "./",
+      display: "standalone",
+      background_color: "#f5f7fb",
+      theme_color: "#0478d1",
+      lang: "pt-BR",
+      icons: [
+        {
+          src: "icon.svg",
+          sizes: "any",
+          type: "image/svg+xml",
+          purpose: "any maskable",
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function buildServiceWorker(products, generatedAt) {
+  const localImages = [...new Set(products.map((product) => product.localImage).filter(Boolean))];
+  const assets = [
+    "./",
+    "index.html",
+    "catalogo.html",
+    "produtos.csv",
+    "resumo.txt",
+    "manifest.webmanifest",
+    "icon.svg",
+    ...localImages,
+  ];
+  const cacheName = `mateus-catalogo-${generatedAt.toISOString().replace(/[^0-9]/g, "").slice(0, 12)}`;
+
+  return `const CACHE_NAME = ${JSON.stringify(cacheName)};
+const PRECACHE_ASSETS = ${JSON.stringify(assets, null, 2)};
+const RUNTIME_CACHE = "mateus-runtime-images-v1";
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    for (const asset of PRECACHE_ASSETS) {
+      try {
+        await putCachedOrFetch(cache, asset);
+      } catch (error) {
+        console.warn("Falha ao salvar no cache", asset, error);
+      }
+    }
+    await self.skipWaiting();
+  })());
+});
+
+async function putCachedOrFetch(cache, asset) {
+  const isImage = /(^|\\/)imagens\\//.test(asset) || /\\.(png|jpe?g|webp|gif|svg)(\\?|$)/i.test(asset);
+  if (isImage) {
+    const existing = await caches.match(asset);
+    if (existing) {
+      await cache.put(asset, existing.clone());
+      return;
+    }
+  }
+  await cache.add(new Request(asset, { cache: "reload" }));
+}
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keep = new Set([CACHE_NAME, RUNTIME_CACHE]);
+    const names = await caches.keys();
+    await Promise.all(names.filter((name) => !keep.has(name)).map((name) => caches.delete(name)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+
+  if (request.method !== "GET") {
+    return;
+  }
+
+  if (request.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        const cache = await caches.open(CACHE_NAME);
+        cache.put("index.html", response.clone());
+        return response;
+      } catch {
+        return (await caches.match("index.html")) || (await caches.match("catalogo.html"));
+      }
+    })());
+    return;
+  }
+
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const response = await fetch(request);
+      const url = new URL(request.url);
+      const isImage = request.destination === "image" || /\\.(png|jpe?g|webp|gif|svg)(\\?|$)/i.test(url.pathname);
+      const sameOrigin = url.origin === self.location.origin;
+      if ((sameOrigin || isImage) && response && response.status < 500) {
+        const cache = await caches.open(isImage ? RUNTIME_CACHE : CACHE_NAME);
+        cache.put(request, response.clone());
+      }
+      return response;
+    } catch {
+      return caches.match("index.html");
+    }
+  })());
+});
+`;
+}
+
+function buildIconSvg() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0478d1"/>
+  <path d="M137 175c0-42 34-76 76-76 22 0 43 10 57 26 14-16 35-26 57-26 42 0 76 34 76 76 0 89-133 164-133 164S137 264 137 175Z" fill="none" stroke="#fff" stroke-width="38" stroke-linejoin="round"/>
+  <path d="M150 390h212" stroke="#fff" stroke-width="32" stroke-linecap="round"/>
+  <path d="M178 433h156" stroke="#fff" stroke-width="24" stroke-linecap="round" opacity=".9"/>
+</svg>
+`;
 }
 
 async function maybeSendTelegram(config, summary, files) {
