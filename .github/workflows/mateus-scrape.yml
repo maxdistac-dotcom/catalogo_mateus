@@ -11,10 +11,6 @@ permissions:
   pages: write
   id-token: write
 
-defaults:
-  run:
-    working-directory: mateus-disponiveis
-
 concurrency:
   group: mateus-scrape
   cancel-in-progress: true
@@ -57,7 +53,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mateus-produtos-disponiveis
-          path: mateus-disponiveis/saida
+          path: saida
           retention-days: 7
 
       - name: Configure Pages
@@ -66,7 +62,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: mateus-disponiveis/saida
+          path: saida
 
       - name: Deploy to GitHub Pages
         id: deployment
