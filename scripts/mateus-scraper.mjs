@@ -225,26 +225,149 @@ async function trySelectClient(page, clientCode) {
     await page.waitForTimeout(1500);
 
     const input = page.getByPlaceholder("Encontre um cliente");
+    let clients = [];
     if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
+      clients = await collectClientOptions(page, { maxScrolls: 30 });
       await input.fill(String(clientCode));
       await page.keyboard.press("Enter").catch(() => {});
       await clickClientSearchIcon(page).catch(() => {});
       await page.waitForTimeout(1200);
+      clients = mergeClientLists(clients, await collectClientOptions(page, { maxScrolls: 4 }));
     }
 
     const point = await getClientSelectPoint(page, clientCode);
     if (!point) {
       console.log(`Não encontrei o cliente ${clientCode} na lista visível.`);
-      return;
+      return { clients };
     }
 
+    const selectedClient = parseClientText(point.text) || clients.find((client) => client.code === String(clientCode));
+    clients = mergeClientLists(clients, selectedClient ? [{ ...selectedClient, selected: true }] : []);
     await page.mouse.click(point.x, point.y);
     await page.waitForTimeout(800);
     await clickContinueClientSelection(page);
+    const selected = selectedClient ? { ...selectedClient, selected: true } : null;
+    const selectedClients = mergeClientLists(clients, selected ? [selected] : []);
+    return {
+      clients: selectedClients.map((client) => ({
+        ...client,
+        selected: client.code === String(clientCode),
+      })),
+      selectedClient: selected,
+    };
     console.log((await isClientModalOpen(page)) ? "Cliquei na seta do cliente, mas o modal ainda está aberto." : "Cliente selecionado.");
   } catch (error) {
     console.log(`Seleção automática não concluiu: ${error.message}`);
   }
+}
+
+async function collectClientOptions(page, options = {}) {
+  const maxScrolls = options.maxScrolls ?? 20;
+  const byCode = new Map();
+  let lastTop = -1;
+
+  for (let attempt = 0; attempt <= maxScrolls; attempt += 1) {
+    const result = await page.evaluate(() => {
+      const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
+      const visible = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+      };
+      const clients = [];
+      for (const element of Array.from(document.querySelectorAll("body *"))) {
+        if (!visible(element)) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 280 || rect.height < 34 || rect.height > 190) continue;
+        const lines = (element.innerText || "")
+          .split(/\n+/)
+          .map(clean)
+          .filter(Boolean);
+        const firstLine = lines[0] || clean(element.textContent || "");
+        const match = firstLine.match(/^(\d{4,})\s*-\s*(.+)$/);
+        if (!match) continue;
+        const childHasSameHeader = Array.from(element.children || []).some((child) => {
+          const childFirst = clean((child.innerText || "").split(/\n+/)[0] || "");
+          return childFirst === firstLine;
+        });
+        if (childHasSameHeader && lines.length <= 2) continue;
+        clients.push({
+          code: match[1],
+          name: match[2],
+          document: lines.slice(1).find((line) => /\d/.test(line) && !/av |rua|r\s/i.test(line) && !/contribuinte/i.test(line)) || "",
+          address: lines.find((line) => /av |rua|r\s|ce\b/i.test(line) && !line.includes(" - ")) || "",
+          taxStatus: lines.find((line) => /contribuinte/i.test(line)) || "",
+          text: lines.join(" | "),
+        });
+      }
+
+      const scrollers = Array.from(document.querySelectorAll("body *"))
+        .filter((element) => visible(element) && element.scrollHeight > element.clientHeight + 20)
+        .map((element) => ({
+          element,
+          score:
+            (element.innerText || "").match(/\d{4,}\s*-/g)?.length || 0,
+          overflow: element.scrollHeight - element.clientHeight,
+        }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score || b.overflow - a.overflow);
+
+      const scroller = scrollers[0]?.element || null;
+      const before = scroller ? scroller.scrollTop : 0;
+      const maxTop = scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
+      if (scroller && before < maxTop) {
+        scroller.scrollTop = Math.min(maxTop, before + Math.max(120, Math.floor(scroller.clientHeight * 0.85)));
+      }
+      return {
+        clients,
+        top: scroller ? scroller.scrollTop : 0,
+        maxTop,
+      };
+    });
+
+    for (const client of result.clients || []) {
+      const current = byCode.get(client.code);
+      if (!current || (client.text || "").length > (current.text || "").length) {
+        byCode.set(client.code, client);
+      }
+    }
+
+    if (!result.maxTop || result.top === lastTop || result.top >= result.maxTop) {
+      break;
+    }
+    lastTop = result.top;
+    await page.waitForTimeout(150);
+  }
+
+  return normalizeClients([...byCode.values()]);
+}
+
+function mergeClientLists(...lists) {
+  const byCode = new Map();
+  for (const client of lists.flat().filter(Boolean)) {
+    if (!client.code) continue;
+    const current = byCode.get(client.code) || {};
+    byCode.set(client.code, {
+      ...current,
+      ...client,
+      selected: Boolean(current.selected || client.selected),
+    });
+  }
+  return normalizeClients([...byCode.values()]);
+}
+
+function parseClientText(value = "") {
+  const cleanText = clean(value);
+  const match = cleanText.match(/(\d{4,})\s*-\s*(.+?)(?=\s{2,}|\s+\d{2}\s|\s+Av\b|\s+Rua\b|\s+R\b|\s+Contribuinte|\s+Não contribuinte|$)/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    code: match[1],
+    name: clean(match[2]),
+    text: cleanText,
+  };
 }
 
 async function clickContinueClientSelection(page) {
@@ -272,7 +395,16 @@ async function getContinueButtonPoint(page) {
       if (!element) return false;
       const style = window.getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
     };
     const buttons = Array.from(document.querySelectorAll("button"))
       .filter((button) => visible(button) && /continuar/i.test(button.textContent || ""))
@@ -403,9 +535,10 @@ async function scrapeSite(config) {
   const collected = [];
   const seenPages = [];
   const clientCode = process.env.MATEUS_CLIENT_CODE || config.login?.clientCode || "";
+  let salesContext = { clients: [] };
 
   try {
-    await ensureSalesContext(page, config, clientCode);
+    salesContext = await ensureSalesContext(page, config, clientCode);
 
     for (const productGroup of config.products) {
       const url = buildProductsUrl(config, productGroup);
@@ -457,6 +590,8 @@ async function scrapeSite(config) {
     meta: {
       mode: "scrape",
       pages: seenPages,
+      clients: salesContext.clients || [],
+      selectedClient: salesContext.selectedClient || null,
     },
   };
 }
@@ -464,8 +599,9 @@ async function scrapeSite(config) {
 async function ensureSalesContext(page, config, clientCode) {
   console.log("Conferindo contexto do Força de Vendas...");
   await enterSalesForce(page, config);
+  let selection = { clients: [] };
   if (clientCode) {
-    await trySelectClient(page, clientCode);
+    selection = (await trySelectClient(page, clientCode)) || selection;
   }
 
   const clientModalOpen = await isClientModalOpen(page);
@@ -474,6 +610,8 @@ async function ensureSalesContext(page, config, clientCode) {
       "O Força de Vendas está pedindo seleção de cliente. Rode `npm run login -- --client=CODIGO` ou selecione manualmente no login e salve a sessão antes de raspar.",
     );
   }
+
+  return selection;
 }
 
 async function openScrapeSession(chromium, userDataDir, launchOptions) {
@@ -611,6 +749,7 @@ async function probeQuantityRules(page, products, config) {
 }
 
 async function probeSingleQuantityRule(page, sku, config) {
+  await scrollProductCardIntoView(page, sku);
   const start = await getQuantityProbeState(page, sku);
   if (!start) {
     return { sku, error: "card não encontrado" };
@@ -662,6 +801,24 @@ async function waitForQuantityInput(page, sku, timeoutMs) {
     state = await getQuantityProbeState(page, sku);
   }
   return state;
+}
+
+async function scrollProductCardIntoView(page, sku) {
+  const found = await page.evaluate((targetSku) => {
+    const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
+    const card = Array.from(document.querySelectorAll("app-product-card")).find((candidate) =>
+      clean(candidate.textContent).includes(`SKU: ${targetSku}`),
+    );
+    if (!card) {
+      return false;
+    }
+    card.scrollIntoView({ block: "center", inline: "nearest" });
+    return true;
+  }, String(sku));
+  if (found) {
+    await page.waitForTimeout(120);
+  }
+  return found;
 }
 
 async function getQuantityProbeState(page, sku) {
@@ -949,6 +1106,31 @@ function clean(value = "") {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
+function normalizeClients(clients = []) {
+  const byCode = new Map();
+  for (const client of clients) {
+    const code = clean(client.code);
+    const name = clean(client.name);
+    if (!code || !name) {
+      continue;
+    }
+    const current = byCode.get(code) || {};
+    byCode.set(code, {
+      code,
+      name,
+      document: clean(client.document || current.document),
+      address: clean(client.address || current.address),
+      taxStatus: clean(client.taxStatus || current.taxStatus),
+      text: clean(client.text || current.text),
+      selected: Boolean(current.selected || client.selected),
+    });
+  }
+  return [...byCode.values()].sort((a, b) => {
+    if (a.selected !== b.selected) return a.selected ? -1 : 1;
+    return a.name.localeCompare(b.name, "pt-BR");
+  });
+}
+
 function parseInteger(value) {
   const digits = String(value || "").replace(/\D/g, "");
   return digits ? Number(digits) : null;
@@ -1032,7 +1214,7 @@ async function writeOutputs(config, products, meta) {
   await cacheImages(products, imagesDir, config);
 
   const summary = buildSummary(config, products, generatedAt, meta);
-  const html = buildCatalogHtml(config, products, summary, generatedAt);
+  const html = buildCatalogHtml(config, products, summary, generatedAt, meta);
   const csv = buildCsv(products);
   const manifest = buildWebManifest(config);
   const serviceWorker = buildServiceWorker(products, generatedAt);
@@ -1072,6 +1254,7 @@ async function publishLatest(outputRoot, runDir, runFiles) {
   await fs.copyFile(runFiles.html, path.join(outputRoot, "catalogo.html"));
   await fs.copyFile(runFiles.index, path.join(outputRoot, "index.html"));
   await fs.copyFile(runFiles.csv, path.join(outputRoot, "produtos.csv"));
+  await fs.copyFile(runFiles.json, path.join(outputRoot, "produtos.json"));
   await fs.copyFile(runFiles.summary, path.join(outputRoot, "resumo.txt"));
   await fs.copyFile(runFiles.manifest, path.join(outputRoot, "manifest.webmanifest"));
   await fs.copyFile(runFiles.serviceWorker, path.join(outputRoot, "sw.js"));
@@ -1233,11 +1416,12 @@ function csvCell(value) {
   return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function buildCatalogHtml(config, products, summary, generatedAt) {
+function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
   const catalogProducts = products.map((product, index) => ({
     ...product,
     cartKey: product.sku || `item-${index + 1}`,
   }));
+  const clients = normalizeClients(meta.clients || []);
   const groups = config.products.map((group) => ({
     ...group,
     products: catalogProducts.filter((product) => product.groupId === group.id),
@@ -1278,6 +1462,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       font-family: Arial, Helvetica, sans-serif;
       color: var(--ink);
       background: var(--soft);
+      overflow-x: hidden;
     }
     header {
       position: sticky;
@@ -1315,6 +1500,39 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       background: #fff;
       color: var(--ink);
     }
+    .tabs {
+      max-width: 1180px;
+      margin: 12px auto 0;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .tab-button {
+      flex: 0 0 auto;
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 9px 12px;
+      white-space: nowrap;
+    }
+    .tab-button.active {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+    .cart-badge {
+      display: inline-flex;
+      min-width: 22px;
+      height: 22px;
+      align-items: center;
+      justify-content: center;
+      margin-left: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.2);
+      color: inherit;
+      font-size: 12px;
+    }
     button, input, textarea {
       font: inherit;
     }
@@ -1326,6 +1544,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       padding: 10px 12px;
       font-weight: 700;
       cursor: pointer;
+      min-width: 0;
     }
     button.secondary {
       background: #fff;
@@ -1341,11 +1560,29 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       margin: 0 auto;
       padding: 16px 18px 28px;
     }
-    .summary {
+    .view.hidden {
+      display: none;
+    }
+    .summary,
+    .stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 10px;
       margin-bottom: 18px;
+    }
+    .summary,
+    .cart-section {
+      display: none;
+    }
+    body[data-active-view="summary"] .summary {
+      display: grid;
+    }
+    body[data-active-view="cart"] .cart-section {
+      display: block;
+    }
+    body[data-active-view="cart"] section[data-group],
+    body[data-active-view="summary"] section[data-group] {
+      display: none;
     }
     .metric {
       background: var(--paper);
@@ -1362,6 +1599,20 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       color: var(--muted);
       font-size: 13px;
     }
+    .summary-text {
+      display: none;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      color: var(--ink);
+      white-space: pre-wrap;
+      line-height: 1.45;
+      overflow-x: auto;
+    }
+    body[data-active-view="summary"] .summary-text {
+      display: block;
+    }
     section {
       margin-top: 22px;
     }
@@ -1374,6 +1625,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
       gap: 12px;
+      min-width: 0;
     }
     .product-card {
       background: var(--paper);
@@ -1383,6 +1635,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       min-height: 100%;
       display: flex;
       flex-direction: column;
+      min-width: 0;
     }
     .image {
       height: 142px;
@@ -1442,11 +1695,12 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     }
     .cart-controls {
       display: grid;
-      grid-template-columns: 74px 1fr;
+      grid-template-columns: minmax(62px, 0.42fr) minmax(92px, 0.58fr);
       gap: 8px;
       margin-top: 8px;
     }
     .cart-controls input,
+    .client-select,
     .rule-bar input,
     .cart-row input {
       width: 100%;
@@ -1457,16 +1711,32 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       background: #fff;
       color: var(--ink);
     }
+    .cart-controls button {
+      width: 100%;
+      padding-left: 8px;
+      padding-right: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cart-controls button.in-cart {
+      border-color: var(--green);
+      background: var(--green);
+    }
     .min-note {
       color: var(--muted);
       font-size: 11px;
+    }
+    .added-note {
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 700;
     }
     .cart-section {
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
-      margin-bottom: 18px;
     }
     .cart-header {
       display: flex;
@@ -1477,6 +1747,21 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     }
     .cart-header h2 {
       margin: 0;
+    }
+    .client-bar {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .client-bar label,
+    .request-box label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .client-select {
+      appearance: auto;
     }
     .rule-bar {
       display: grid;
@@ -1587,9 +1872,36 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       .image { height: 120px; }
       .image img { max-height: 116px; }
     }
+    @media (max-width: 760px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .body {
+        padding: 9px;
+      }
+      .cart-controls {
+        grid-template-columns: 1fr;
+      }
+      .cart-controls input,
+      .cart-controls button {
+        padding: 8px;
+      }
+      .name {
+        font-size: 13px;
+        min-height: 48px;
+      }
+      .price {
+        font-size: 17px;
+      }
+      .stock {
+        flex-direction: column;
+        gap: 2px;
+      }
+    }
   </style>
 </head>
-<body>
+<body data-active-view="products">
   <header>
     <div class="top">
       <div>
@@ -1598,6 +1910,11 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       </div>
       <input id="search" type="search" autocomplete="off" placeholder="Buscar produto, SKU, marca ou tamanho">
     </div>
+    <nav class="tabs" aria-label="Páginas do catálogo">
+      <button type="button" class="tab-button active" data-view-target="products">Produtos</button>
+      <button type="button" class="tab-button" data-view-target="cart">Carrinho <span id="cartBadge" class="cart-badge">0</span></button>
+      <button type="button" class="tab-button" data-view-target="summary">Resumo</button>
+    </nav>
   </header>
   <main>
     <div class="summary">
@@ -1611,10 +1928,15 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
         )
         .join("")}
     </div>
+    <pre class="summary-text">${escapeHtml(summary)}</pre>
     <section class="cart-section" data-cart-panel>
       <div class="cart-header">
         <h2>Carrinho fictício (<span id="cartCount">0</span>)</h2>
         <button id="clearCart" type="button" class="danger">Limpar</button>
+      </div>
+      <div class="client-bar">
+        <label for="clientSelect">Cliente para o modelo de alteração</label>
+        <select id="clientSelect" class="client-select"></select>
       </div>
       <div class="rule-bar">
         <input id="linePattern" type="text" autocomplete="off" placeholder="Linha de produto: Havaianas Brasil">
@@ -1627,15 +1949,17 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
         <span>Total negociado: <strong id="cartTotalValue">R$ 0,00</strong></span>
       </div>
       <div class="request-box">
+        <label for="requestText">Modelo de alteração de tela</label>
         <textarea id="requestText" readonly></textarea>
         <button id="copyRequest" type="button" class="secondary">Copiar solicitação</button>
       </div>
     </section>
     ${groups.map(renderGroup).join("\n")}
   </main>
-  <footer>${escapeHtml(summary)}</footer>
+  <footer>Catálogo gerado em ${escapeHtml(formatDateTime(generatedAt, config.timezone))}. Abra com internet uma vez para atualizar o cache offline.</footer>
   <div id="pwaStatus" class="pwa-status"></div>
   <script type="application/json" id="products-data">${safeJsonForScript(catalogProducts)}</script>
+  <script type="application/json" id="clients-data">${safeJsonForScript(clients)}</script>
   <script type="application/json" id="price-template">${safeJsonForScript(priceRequestTemplate)}</script>
   <script>
     const input = document.getElementById("search");
@@ -1643,15 +1967,27 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
     const sections = Array.from(document.querySelectorAll("section[data-group]"));
     const products = JSON.parse(document.getElementById("products-data").textContent);
     const productsByKey = new Map(products.map((product) => [product.cartKey, product]));
+    const clients = JSON.parse(document.getElementById("clients-data").textContent);
+    const clientsByCode = new Map(clients.map((client) => [client.code, client]));
     const priceTemplate = JSON.parse(document.getElementById("price-template").textContent);
     const cartKey = "mateus-fictitious-cart-v2";
+    const clientKey = "mateus-selected-client-v1";
     const cartItems = document.getElementById("cartItems");
     const cartCount = document.getElementById("cartCount");
+    const cartBadge = document.getElementById("cartBadge");
     const cartTotalQty = document.getElementById("cartTotalQty");
     const cartTotalValue = document.getElementById("cartTotalValue");
     const requestText = document.getElementById("requestText");
+    const clientSelect = document.getElementById("clientSelect");
     const pwaStatus = document.getElementById("pwaStatus");
     let cart = readCart();
+
+    document.querySelectorAll("[data-view-target]").forEach((button) => {
+      button.addEventListener("click", () => setActiveView(button.dataset.viewTarget));
+    });
+    window.addEventListener("hashchange", () => setActiveView(viewFromHash(), { updateHash: false }));
+    setupClientSelect();
+    setActiveView(viewFromHash(), { updateHash: false, keepScroll: true });
 
     input.addEventListener("input", () => {
       const query = input.value.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().trim();
@@ -1718,6 +2054,11 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       saveCart();
     });
 
+    clientSelect.addEventListener("change", () => {
+      localStorage.setItem(clientKey, clientSelect.value || "");
+      renderCart();
+    });
+
     document.getElementById("copyRequest").addEventListener("click", async () => {
       requestText.select();
       try {
@@ -1729,6 +2070,42 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
 
     renderCart();
     registerOfflineCache();
+
+    function viewFromHash() {
+      const view = (window.location.hash || "").replace("#", "");
+      return ["products", "cart", "summary"].includes(view) ? view : "products";
+    }
+
+    function setActiveView(view, options = {}) {
+      document.body.dataset.activeView = view;
+      document.querySelectorAll("[data-view-target]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.viewTarget === view);
+      });
+      if (options.updateHash !== false && window.location.hash !== "#" + view) {
+        history.replaceState(null, "", "#" + view);
+      }
+      if (!options.keepScroll) {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+
+    function setupClientSelect() {
+      const saved = localStorage.getItem(clientKey) || "";
+      const selectedClient = clients.find((client) => client.selected) || clients[0];
+      const selectedCode = saved || selectedClient?.code || "";
+      const options = ['<option value="">Cliente padrão do modelo</option>'].concat(
+        clients.map((client) => {
+          const selected = client.code === selectedCode ? " selected" : "";
+          return '<option value="' + escapeText(client.code) + '"' + selected + '>'
+            + escapeText(client.code + " - " + client.name)
+            + '</option>';
+        }),
+      );
+      clientSelect.innerHTML = options.join("");
+      if (selectedCode && clientsByCode.has(selectedCode)) {
+        clientSelect.value = selectedCode;
+      }
+    }
 
     function addToCart(key) {
       const product = productsByKey.get(key);
@@ -1765,6 +2142,7 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
         .filter((entry) => entry.product);
 
       cartCount.textContent = String(entries.length);
+      cartBadge.textContent = String(entries.length);
       cartItems.innerHTML = entries.length
         ? entries.map(renderCartRow).join("")
         : '<div class="empty">Nenhum item no carrinho.</div>';
@@ -1780,6 +2158,22 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
       cartTotalQty.textContent = String(totalQty);
       cartTotalValue.textContent = "R$ " + formatMoney(totalValue);
       requestText.value = buildRequestText(entries);
+      updateProductButtons(entries);
+    }
+
+    function updateProductButtons(entries) {
+      const quantities = new Map(entries.map((entry) => [entry.key, normalizeQty(entry.item.qty, entry.product)]));
+      document.querySelectorAll("[data-add-key]").forEach((button) => {
+        const qty = quantities.get(button.dataset.addKey) || 0;
+        button.textContent = qty ? "Somar" : "Adicionar";
+        button.classList.toggle("in-cart", Boolean(qty));
+        button.setAttribute("aria-label", qty ? "Somar mais deste item ao carrinho" : "Adicionar ao carrinho");
+      });
+      document.querySelectorAll("[data-added-key]").forEach((note) => {
+        const qty = quantities.get(note.dataset.addedKey) || 0;
+        note.textContent = qty ? "No carrinho: " + qty : "";
+        note.classList.toggle("hidden", !qty);
+      });
     }
 
     function renderCartRow(entry) {
@@ -1809,12 +2203,20 @@ function buildCatalogHtml(config, products, summary, generatedAt) {
         "",
         priceTemplate.rca,
         "",
-        priceTemplate.client,
+        selectedClientLine(),
         "",
         priceTemplate.supervisor,
         "",
         lines.join("\\n"),
       ].join("\\n");
+    }
+
+    function selectedClientLine() {
+      const client = clientsByCode.get(clientSelect.value || "");
+      if (!client) {
+        return priceTemplate.client;
+      }
+      return "Cliente: *" + client.code + "* - " + client.name;
     }
 
     function normalizeQty(value, product) {
@@ -1956,6 +2358,7 @@ function renderProductCard(product) {
     <div class="min-note">Mínimo carrinho: ${escapeHtml(product.minQty)} ${
       product.minQtySource === "site" ? "(site)" : "(padrão)"
     }</div>
+    <div class="added-note hidden" data-added-key="${escapeAttr(product.cartKey)}"></div>
     <div class="cart-controls">
       <input data-card-qty="${escapeAttr(product.cartKey)}" type="number" min="${escapeAttr(
         product.minQty,
@@ -1999,6 +2402,7 @@ function buildServiceWorker(products, generatedAt) {
     "index.html",
     "catalogo.html",
     "produtos.csv",
+    "produtos.json",
     "resumo.txt",
     "manifest.webmanifest",
     "icon.svg",
