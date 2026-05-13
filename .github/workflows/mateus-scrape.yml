@@ -22,6 +22,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       MATEUS_STORAGE_STATE_BASE64: ${{ secrets.MATEUS_STORAGE_STATE_BASE64 }}
       MATEUS_CLIENT_CODE: ${{ secrets.MATEUS_CLIENT_CODE }}
       MATEUS_TELEGRAM_BOT_TOKEN: ${{ secrets.MATEUS_TELEGRAM_BOT_TOKEN }}
@@ -33,7 +34,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
+
+      - name: Check required secrets
+        run: |
+          test -n "$MATEUS_STORAGE_STATE_BASE64" || (echo "::error::Missing secret MATEUS_STORAGE_STATE_BASE64. Generate it locally from dados/storage-state.base64.txt and add it in Settings > Secrets and variables > Actions." && exit 1)
+          test -n "$MATEUS_CLIENT_CODE" || (echo "::warning::Missing MATEUS_CLIENT_CODE. The scraper will use only the saved session client, if present.")
 
       - name: Install Playwright
         run: |
@@ -41,7 +47,7 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Scrape Mateus Mais
-        run: node scripts/mateus-scraper.mjs scrape
+        run: node scripts/mateus-scraper.mjs scrape --no-images
 
       - name: Upload catalog artifact
         uses: actions/upload-artifact@v4
