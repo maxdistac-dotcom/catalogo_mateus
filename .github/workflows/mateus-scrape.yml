@@ -1,0 +1,63 @@
+name: Mateus Mais produtos disponíveis
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 07:00 em America/Fortaleza (UTC-3), de segunda a sábado.
+    - cron: "0 10 * * 1-6"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mateus-scrape
+  cancel-in-progress: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      MATEUS_STORAGE_STATE_BASE64: ${{ secrets.MATEUS_STORAGE_STATE_BASE64 }}
+      MATEUS_CLIENT_CODE: ${{ secrets.MATEUS_CLIENT_CODE }}
+      MATEUS_TELEGRAM_BOT_TOKEN: ${{ secrets.MATEUS_TELEGRAM_BOT_TOKEN }}
+      MATEUS_TELEGRAM_CHAT_ID: ${{ secrets.MATEUS_TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@latest
+          npx playwright install --with-deps chromium
+
+      - name: Scrape Mateus Mais
+        run: node scripts/mateus-scraper.mjs scrape
+
+      - name: Upload catalog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mateus-produtos-disponiveis
+          path: saida
+          retention-days: 7
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: saida
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
