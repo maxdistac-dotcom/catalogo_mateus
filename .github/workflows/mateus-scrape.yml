@@ -1,10 +1,22 @@
-name: Mateus Mais produtos disponíveis
+name: Mateus Mais produtos disponiveis
 
 on:
   workflow_dispatch:
+    inputs:
+      scrape_mode:
+        description: "Modo da coleta"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - no-images
+          - images
   schedule:
-    # 07:00 em America/Fortaleza (UTC-3), de segunda a sábado.
-    - cron: "0 10 * * 1-6"
+    # 07:00 em America/Fortaleza (UTC-3). Segunda: completo com imagens.
+    - cron: "0 10 * * 1"
+    # 07:00 em America/Fortaleza (UTC-3). Terca a sabado: leve sem imagens.
+    - cron: "0 10 * * 2-6"
 
 permissions:
   contents: read
@@ -36,6 +48,27 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Select scrape mode
+        shell: bash
+        run: |
+          MODE="${{ github.event.inputs.scrape_mode || 'auto' }}"
+          if [ "$MODE" = "auto" ]; then
+            if [ "${{ github.event.schedule }}" = "0 10 * * 1" ]; then
+              MODE="images"
+            else
+              MODE="no-images"
+            fi
+          fi
+
+          if [ "$MODE" = "images" ]; then
+            echo "SCRAPE_ARGS=" >> "$GITHUB_ENV"
+          else
+            echo "SCRAPE_ARGS=--no-images" >> "$GITHUB_ENV"
+          fi
+
+          echo "SCRAPE_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "Modo selecionado: $MODE"
+
       - name: Check required secrets
         run: |
           test -n "$MATEUS_STORAGE_STATE_BASE64" || (echo "::error::Missing secret MATEUS_STORAGE_STATE_BASE64. Generate it locally from dados/storage-state.base64.txt and add it in Settings > Secrets and variables > Actions." && exit 1)
@@ -47,12 +80,12 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Scrape Mateus Mais
-        run: node scripts/mateus-scraper.mjs scrape
+        run: node scripts/mateus-scraper.mjs scrape $SCRAPE_ARGS
 
       - name: Upload catalog artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mateus-produtos-disponiveis
+          name: mateus-produtos-disponiveis-${{ env.SCRAPE_MODE }}
           path: saida
           retention-days: 7
 

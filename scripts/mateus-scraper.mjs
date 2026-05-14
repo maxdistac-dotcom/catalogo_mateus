@@ -1301,7 +1301,7 @@ async function writeOutputs(config, products, meta) {
   const html = buildCatalogHtml(config, products, summary, generatedAt, meta);
   const csv = buildCsv(products);
   const manifest = buildWebManifest(config);
-  const serviceWorker = buildServiceWorker(products, generatedAt);
+  const serviceWorker = buildServiceWorker(products, generatedAt, config);
   const iconSvg = buildIconSvg();
 
   const runFiles = {
@@ -1364,7 +1364,10 @@ async function copyDirectory(source, target) {
 
 async function cacheImages(products, imagesDir, config) {
   if (config.downloadImages === false) {
-    console.log("Imagens locais desativadas nesta execução.");
+    for (const product of products.filter((item) => item.image)) {
+      product.localImage = `imagens/${imageFilename(product)}`;
+    }
+    console.log("Imagens locais desativadas nesta execucao; usando caminhos locais esperados com fallback remoto.");
     return;
   }
 
@@ -2432,11 +2435,16 @@ function renderProductCard(product) {
     [product.groupTitle, product.brand, product.name, product.measure, product.sku].join(" "),
   );
   const image = product.localImage || product.image;
+  const fallbackImage =
+    product.localImage && product.image && product.localImage !== product.image ? product.image : "";
+  const fallbackAttr = fallbackImage
+    ? ` data-fallback-src="${escapeAttr(fallbackImage)}" onerror="if (this.dataset.fallbackSrc) { this.onerror = null; this.src = this.dataset.fallbackSrc; }"`
+    : "";
   const maxAttr = product.maxQty ? ` max="${escapeAttr(product.maxQty)}"` : "";
   return `<article class="product-card" data-search="${escapeAttr(search)}">
   <div class="image">${
     image
-      ? `<img loading="lazy" src="${escapeAttr(image)}" alt="${escapeAttr(product.name)}">`
+      ? `<img loading="lazy" src="${escapeAttr(image)}" alt="${escapeAttr(product.name)}"${fallbackAttr}>`
       : ""
   }</div>
   <div class="body">
@@ -2488,7 +2496,7 @@ function buildWebManifest(config) {
   )}\n`;
 }
 
-function buildServiceWorker(products, generatedAt) {
+function buildServiceWorker(products, generatedAt, config = {}) {
   const localImages = [...new Set(products.map((product) => product.localImage).filter(Boolean))];
   const assets = [
     "./",
@@ -2502,10 +2510,12 @@ function buildServiceWorker(products, generatedAt) {
     ...localImages,
   ];
   const cacheName = `mateus-catalogo-${generatedAt.toISOString().replace(/[^0-9]/g, "").slice(0, 12)}`;
+  const cacheLocalImages = config.downloadImages !== false;
 
   return `const CACHE_NAME = ${JSON.stringify(cacheName)};
 const PRECACHE_ASSETS = ${JSON.stringify(assets, null, 2)};
 const RUNTIME_CACHE = "mateus-runtime-images-v1";
+const CACHE_LOCAL_IMAGES = ${JSON.stringify(cacheLocalImages)};
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
@@ -2533,6 +2543,9 @@ async function putCachedOrFetch(cache, asset) {
     const existing = await caches.match(asset);
     if (existing) {
       await cache.put(asset, existing.clone());
+      return;
+    }
+    if (!CACHE_LOCAL_IMAGES) {
       return;
     }
   }

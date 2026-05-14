@@ -111,6 +111,14 @@ Para não depender do PC ligado, o caminho mais prático é:
 
 Este projeto já inclui o workflow em `.github\workflows\mateus-scrape.yml`.
 
+Agenda configurada no GitHub Actions:
+
+- segunda-feira às 07:00: coleta completa com imagens;
+- terça a sábado às 07:00: coleta leve sem baixar imagens;
+- domingo: sem coleta.
+
+No disparo manual (`Run workflow`), use `images` para forçar uma coleta completa ou `no-images` para uma coleta rápida.
+
 ## PWA e uso offline no celular
 
 O GitHub Pages publica também um PWA:
@@ -129,7 +137,7 @@ Como usar no celular:
 
 Quando o workflow gerar um catálogo novo, o PWA baixa a versão nova na próxima vez que você abrir com internet.
 
-Observação: se você rodar `scrape:no-images` ou `scrape:fast`, o catálogo fica leve, mas as imagens não ficam garantidas offline.
+Observação: a coleta leve usa os caminhos de imagem já conhecidos e tenta reaproveitar o cache offline da coleta completa. Se a imagem ainda não estiver no aparelho, o catálogo tenta carregar a imagem remota quando houver internet.
 
 ### Preparar sessão para GitHub Actions
 
