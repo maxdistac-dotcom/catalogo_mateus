@@ -4,6 +4,7 @@ Projeto local ou hospedado para consultar produtos disponíveis no Força de Ven
 
 - `saida\catalogo.html`: catálogo visual offline, com busca, carrinho fictício e texto de alteração de tela.
 - `saida\produtos.csv`: planilha simples para abrir no Excel.
+- `saida\clientes.json`: lista de clientes capturados no seletor do Força de Vendas.
 - `saida\resumo.txt`: resumo da última execução.
 - `saida\YYYY-MM-DD_HH-mm\`: histórico de cada coleta.
 
@@ -75,6 +76,7 @@ Recursos:
 - adicionar item obedecendo o mínimo e o passo capturados do site;
 - quando o site só mostra o `min` depois do clique no `+`, o scraper clica no item, lê `min/max` e remove o item logo em seguida;
 - quando ainda assim não for possível capturar `min`, o catálogo usa mínimo `1` e marca o produto como `padrão`;
+- regras fixas no `config\mateus.config.json` podem sobrescrever mínimos conhecidos, como `Sandália Havaianas Color`, `Sandália Color` e `Sabão em Barra Ypê 800g`;
 - alterar preço negociado por item no carrinho;
 - aplicar preço por linha de produto, por exemplo `Havaianas Brasil` com `33,50`;
 - gerar automaticamente o texto de solicitação:
@@ -179,5 +181,6 @@ Depois feche e abra o PowerShell. Sem essas variáveis, a coleta continua gerand
 - Sabão em Barra Ypê 800g disponível.
 - Sabão em Pó Tixan Ypê Sachê 400g disponível.
 - Detergente Ypê 500ml disponível.
+- Assolan disponível.
 
 Os filtros ficam em `config\mateus.config.json`.

@@ -12,6 +12,21 @@
     "maxItemsPerPage": 700,
     "delayMs": 350
   },
+  "quantityOverrides": [
+    {
+      "title": "Havaianas Color e Sandalia Color",
+      "minQty": 6,
+      "source": "regra",
+      "mustContainAny": ["havaianas color", "sandalia color"],
+      "mustNotContain": ["color essential"]
+    },
+    {
+      "title": "Ype barra 800g",
+      "groupId": "sabao_barra_ype_800g",
+      "minQty": 12,
+      "source": "regra"
+    }
+  ],
   "cart": {
     "defaultMinQty": 1,
     "priceRequestTemplate": {
@@ -64,6 +79,14 @@
       "filter": {
         "mustContain": ["detergente", "ype"],
         "regex": ["(^|\\D)500\\s*ml($|\\D)"]
+      }
+    },
+    {
+      "id": "assolan",
+      "title": "Assolan",
+      "search": "Assolan",
+      "filter": {
+        "mustContain": ["assolan"]
       }
     }
   ],

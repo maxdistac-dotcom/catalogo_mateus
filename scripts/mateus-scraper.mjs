@@ -223,14 +223,17 @@ async function trySelectClient(page, clientCode) {
   try {
     await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1500);
+    await openClientSelectionModal(page);
 
     const input = page.getByPlaceholder("Encontre um cliente");
     let clients = [];
     if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await input.fill("");
-      await clickClientSearchIcon(page).catch(() => {});
-      await page.waitForTimeout(1000);
+      await clearClientSearch(page, input);
       clients = await collectClientOptions(page, { maxScrolls: 90, resetScroll: true });
+      if (clients.length <= 1) {
+        clients = mergeClientLists(clients, await collectClientsBySearchHints(page, input));
+        await clearClientSearch(page, input);
+      }
       if (clients.length) {
         console.log(`Clientes capturados no seletor: ${clients.length}`);
       }
@@ -262,10 +265,107 @@ async function trySelectClient(page, clientCode) {
       })),
       selectedClient: selected,
     };
-    console.log((await isClientModalOpen(page)) ? "Cliquei na seta do cliente, mas o modal ainda está aberto." : "Cliente selecionado.");
   } catch (error) {
     console.log(`Seleção automática não concluiu: ${error.message}`);
   }
+}
+
+async function openClientSelectionModal(page) {
+  if (await isClientModalOpen(page)) {
+    return true;
+  }
+
+  const point = await page.evaluate(() => {
+    const visible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+    const candidates = Array.from(document.querySelectorAll("button, a, span, div"))
+      .filter((element) => visible(element) && /^trocar$/i.test((element.textContent || "").trim()))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const parentText = (element.closest("section, article, div")?.textContent || "").replace(/\s+/g, " ").trim();
+        let score = 0;
+        if (/cliente|cpf|cnpj|raz[aã]o|fantasia|contribuinte/i.test(parentText)) score += 8;
+        if (/loja atual|mix mateus|rua miguel/i.test(parentText)) score -= 8;
+        score += Math.min(4, rect.top / 100);
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, score };
+      })
+      .sort((a, b) => b.score - a.score)[0];
+    return candidates || null;
+  });
+
+  if (point) {
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(1200);
+  }
+  return isClientModalOpen(page);
+}
+
+async function clearClientSearch(page, input) {
+  await input.click({ timeout: 3000 }).catch(() => {});
+  await page.keyboard.press("Control+A").catch(() => {});
+  await page.keyboard.press("Backspace").catch(() => {});
+  await input.fill("").catch(() => {});
+  await input
+    .evaluate((element) => {
+      element.value = "";
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    })
+    .catch(() => {});
+  await clickClientSearchIcon(page).catch(() => {});
+  await page.keyboard.press("Enter").catch(() => {});
+  await page.waitForTimeout(1400);
+}
+
+async function collectClientsBySearchHints(page, input) {
+  const hints = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "a",
+    "e",
+    "i",
+    "o",
+    "u",
+    "r",
+    "s",
+    "m",
+    "c",
+    "l",
+    "p",
+    "t",
+  ];
+  let clients = [];
+
+  for (const hint of hints) {
+    await input.fill(hint).catch(() => {});
+    await clickClientSearchIcon(page).catch(() => {});
+    await page.keyboard.press("Enter").catch(() => {});
+    await page.waitForTimeout(900);
+    clients = mergeClientLists(clients, await collectClientOptions(page, { maxScrolls: 35, resetScroll: true }));
+  }
+
+  return clients;
 }
 
 async function collectClientOptions(page, options = {}) {
@@ -355,13 +455,16 @@ async function collectClientOptions(page, options = {}) {
       const scroller = rowScroller || fallbackScroller || null;
       const before = scroller ? scroller.scrollTop : 0;
       const maxTop = scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
+      const rect = scroller?.getBoundingClientRect();
       if (scroller && before < maxTop) {
         scroller.scrollTop = Math.min(maxTop, before + Math.max(120, Math.floor(scroller.clientHeight * 0.85)));
       }
       return {
         clients: [...clientsByCode.values()],
+        before,
         top: scroller ? scroller.scrollTop : 0,
         maxTop,
+        wheelPoint: rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null,
       };
     });
 
@@ -372,7 +475,14 @@ async function collectClientOptions(page, options = {}) {
       }
     }
 
-    if (!result.maxTop || result.top === lastTop || result.top >= result.maxTop) {
+    const canScroll = result.maxTop && result.top < result.maxTop;
+    if (!canScroll) {
+      break;
+    }
+    if (result.top === result.before && result.wheelPoint) {
+      await page.mouse.move(result.wheelPoint.x, result.wheelPoint.y).catch(() => {});
+      await page.mouse.wheel(0, 650).catch(() => {});
+    } else if (result.top === lastTop) {
       break;
     }
     lastTop = result.top;
@@ -1244,7 +1354,7 @@ function applyConfiguredFilters(config, rawProducts) {
         continue;
       }
       seen.add(key);
-      output.push({ ...product, groupId: group.id, groupTitle: group.title });
+      output.push(applyQuantityOverrides({ ...product, groupId: group.id, groupTitle: group.title }, group, config));
     }
   }
 
@@ -1277,6 +1387,52 @@ function matchesFilter(product, filter) {
   return true;
 }
 
+function applyQuantityOverrides(product, group, config) {
+  for (const override of config.quantityOverrides || []) {
+    if (!matchesQuantityOverride(product, group, override)) {
+      continue;
+    }
+    const minQty = parseInteger(override.minQty);
+    if (minQty) {
+      product.minQty = minQty;
+      product.minQtySource = override.source || "regra";
+      if (product.maxQty && Number(product.maxQty) < minQty && product.stockNumber && product.stockNumber >= minQty) {
+        product.maxQty = product.stockNumber;
+      }
+    }
+  }
+  return product;
+}
+
+function matchesQuantityOverride(product, group, override) {
+  if (override.groupId && override.groupId !== group.id && override.groupId !== product.groupId) {
+    return false;
+  }
+
+  const haystack = normalizeText([product.groupTitle, product.brand, product.name, product.measure, product.sku].join(" "));
+
+  for (const required of override.mustContain || []) {
+    if (!haystack.includes(normalizeText(required))) {
+      return false;
+    }
+  }
+
+  if (override.mustContainAny?.length) {
+    const hasAny = override.mustContainAny.some((required) => haystack.includes(normalizeText(required)));
+    if (!hasAny) {
+      return false;
+    }
+  }
+
+  for (const blocked of override.mustNotContain || []) {
+    if (haystack.includes(normalizeText(blocked))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function normalizeText(value = "") {
   return String(value)
     .normalize("NFD")
@@ -1297,8 +1453,10 @@ async function writeOutputs(config, products, meta) {
   console.log("Gerando arquivos...");
   await cacheImages(products, imagesDir, config);
 
-  const summary = buildSummary(config, products, generatedAt, meta);
-  const html = buildCatalogHtml(config, products, summary, generatedAt, meta);
+  const clients = normalizeClients(meta.clients || []);
+  const normalizedMeta = { ...meta, clients };
+  const summary = buildSummary(config, products, generatedAt, normalizedMeta);
+  const html = buildCatalogHtml(config, products, summary, generatedAt, normalizedMeta);
   const csv = buildCsv(products);
   const manifest = buildWebManifest(config);
   const serviceWorker = buildServiceWorker(products, generatedAt, config);
@@ -1309,6 +1467,7 @@ async function writeOutputs(config, products, meta) {
     index: path.join(runDir, "index.html"),
     csv: path.join(runDir, "produtos.csv"),
     json: path.join(runDir, "produtos.json"),
+    clients: path.join(runDir, "clientes.json"),
     summary: path.join(runDir, "resumo.txt"),
     manifest: path.join(runDir, "manifest.webmanifest"),
     serviceWorker: path.join(runDir, "sw.js"),
@@ -1318,7 +1477,8 @@ async function writeOutputs(config, products, meta) {
   await fs.writeFile(runFiles.html, html, "utf8");
   await fs.writeFile(runFiles.index, html, "utf8");
   await fs.writeFile(runFiles.csv, "\uFEFF" + csv, "utf8");
-  await fs.writeFile(runFiles.json, JSON.stringify({ generatedAt, meta, products }, null, 2), "utf8");
+  await fs.writeFile(runFiles.json, JSON.stringify({ generatedAt, meta: normalizedMeta, products }, null, 2), "utf8");
+  await fs.writeFile(runFiles.clients, JSON.stringify({ generatedAt, clients }, null, 2), "utf8");
   await fs.writeFile(runFiles.summary, summary, "utf8");
   await fs.writeFile(runFiles.manifest, manifest, "utf8");
   await fs.writeFile(runFiles.serviceWorker, serviceWorker, "utf8");
@@ -1339,6 +1499,7 @@ async function publishLatest(outputRoot, runDir, runFiles) {
   await fs.copyFile(runFiles.index, path.join(outputRoot, "index.html"));
   await fs.copyFile(runFiles.csv, path.join(outputRoot, "produtos.csv"));
   await fs.copyFile(runFiles.json, path.join(outputRoot, "produtos.json"));
+  await fs.copyFile(runFiles.clients, path.join(outputRoot, "clientes.json"));
   await fs.copyFile(runFiles.summary, path.join(outputRoot, "resumo.txt"));
   await fs.copyFile(runFiles.manifest, path.join(outputRoot, "manifest.webmanifest"));
   await fs.copyFile(runFiles.serviceWorker, path.join(outputRoot, "sw.js"));
@@ -2441,6 +2602,8 @@ function renderProductCard(product) {
     ? ` data-fallback-src="${escapeAttr(fallbackImage)}" onerror="if (this.dataset.fallbackSrc) { this.onerror = null; this.src = this.dataset.fallbackSrc; }"`
     : "";
   const maxAttr = product.maxQty ? ` max="${escapeAttr(product.maxQty)}"` : "";
+  const minSourceText =
+    product.minQtySource === "site" ? "(site)" : product.minQtySource === "regra" ? "(regra)" : "(padrão)";
   return `<article class="product-card" data-search="${escapeAttr(search)}">
   <div class="image">${
     image
@@ -2456,9 +2619,7 @@ function renderProductCard(product) {
     <div class="stock"><span>Cx: ${escapeHtml(product.cx || "-")}</span><span>Estoque: <strong>${escapeHtml(
       product.stock || String(product.stockNumber ?? "-"),
     )}</strong></span></div>
-    <div class="min-note">Mínimo carrinho: ${escapeHtml(product.minQty)} ${
-      product.minQtySource === "site" ? "(site)" : "(padrão)"
-    }</div>
+    <div class="min-note">Mínimo carrinho: ${escapeHtml(product.minQty)} ${minSourceText}</div>
     <div class="added-note hidden" data-added-key="${escapeAttr(product.cartKey)}"></div>
     <div class="cart-controls">
       <input data-card-qty="${escapeAttr(product.cartKey)}" type="number" min="${escapeAttr(
@@ -2504,6 +2665,7 @@ function buildServiceWorker(products, generatedAt, config = {}) {
     "catalogo.html",
     "produtos.csv",
     "produtos.json",
+    "clientes.json",
     "resumo.txt",
     "manifest.webmanifest",
     "icon.svg",
