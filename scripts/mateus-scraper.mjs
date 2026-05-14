@@ -227,12 +227,18 @@ async function trySelectClient(page, clientCode) {
     const input = page.getByPlaceholder("Encontre um cliente");
     let clients = [];
     if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
-      clients = await collectClientOptions(page, { maxScrolls: 30 });
+      await input.fill("");
+      await clickClientSearchIcon(page).catch(() => {});
+      await page.waitForTimeout(1000);
+      clients = await collectClientOptions(page, { maxScrolls: 90, resetScroll: true });
+      if (clients.length) {
+        console.log(`Clientes capturados no seletor: ${clients.length}`);
+      }
       await input.fill(String(clientCode));
       await page.keyboard.press("Enter").catch(() => {});
       await clickClientSearchIcon(page).catch(() => {});
       await page.waitForTimeout(1200);
-      clients = mergeClientLists(clients, await collectClientOptions(page, { maxScrolls: 4 }));
+      clients = mergeClientLists(clients, await collectClientOptions(page, { maxScrolls: 6, resetScroll: true }));
     }
 
     const point = await getClientSelectPoint(page, clientCode);
@@ -248,6 +254,7 @@ async function trySelectClient(page, clientCode) {
     await clickContinueClientSelection(page);
     const selected = selectedClient ? { ...selectedClient, selected: true } : null;
     const selectedClients = mergeClientLists(clients, selected ? [selected] : []);
+    console.log((await isClientModalOpen(page)) ? "Modal de cliente ainda aberto." : "Cliente selecionado.");
     return {
       clients: selectedClients.map((client) => ({
         ...client,
@@ -266,6 +273,10 @@ async function collectClientOptions(page, options = {}) {
   const byCode = new Map();
   let lastTop = -1;
 
+  if (options.resetScroll !== false) {
+    await resetClientListScroll(page);
+  }
+
   for (let attempt = 0; attempt <= maxScrolls; attempt += 1) {
     const result = await page.evaluate(() => {
       const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
@@ -275,52 +286,80 @@ async function collectClientOptions(page, options = {}) {
         const rect = element.getBoundingClientRect();
         return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
       };
-      const clients = [];
-      for (const element of Array.from(document.querySelectorAll("body *"))) {
-        if (!visible(element)) continue;
-        const rect = element.getBoundingClientRect();
-        if (rect.width < 280 || rect.height < 34 || rect.height > 190) continue;
-        const lines = (element.innerText || "")
+      const parseClient = (element) => {
+        const lines = (element.innerText || element.textContent || "")
           .split(/\n+/)
           .map(clean)
           .filter(Boolean);
-        const firstLine = lines[0] || clean(element.textContent || "");
-        const match = firstLine.match(/^(\d{4,})\s*-\s*(.+)$/);
-        if (!match) continue;
-        const childHasSameHeader = Array.from(element.children || []).some((child) => {
-          const childFirst = clean((child.innerText || "").split(/\n+/)[0] || "");
-          return childFirst === firstLine;
-        });
-        if (childHasSameHeader && lines.length <= 2) continue;
-        clients.push({
+        const headerIndex = lines.findIndex((line) => /^\d{4,}\s*-\s*/.test(line));
+        if (headerIndex < 0) return null;
+        const relevantLines = lines.slice(headerIndex);
+        const header = relevantLines[0];
+        const match = header.match(/^(\d{4,})\s*-\s*(.+)$/);
+        if (!match) return null;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 240 || rect.height < 24 || rect.height > 210) return null;
+        return {
           code: match[1],
           name: match[2],
-          document: lines.slice(1).find((line) => /\d/.test(line) && !/av |rua|r\s/i.test(line) && !/contribuinte/i.test(line)) || "",
-          address: lines.find((line) => /av |rua|r\s|ce\b/i.test(line) && !line.includes(" - ")) || "",
-          taxStatus: lines.find((line) => /contribuinte/i.test(line)) || "",
-          text: lines.join(" | "),
-        });
+          document:
+            relevantLines
+              .slice(1)
+              .find((line) => /\d/.test(line) && !/^(av|avenida|rua|r\.?)\b/i.test(line) && !/contribuinte/i.test(line)) || "",
+          address:
+            relevantLines.find((line) => /^(av|avenida|rua|r\.?)\b|,\s*[a-z]/i.test(line) && !/^\d{4,}\s*-/.test(line)) ||
+            "",
+          taxStatus: relevantLines.find((line) => /contribuinte/i.test(line)) || "",
+          text: relevantLines.join(" | "),
+          height: rect.height,
+          top: rect.top,
+        };
+      };
+      const candidates = Array.from(document.querySelectorAll("body *"))
+        .filter(visible)
+        .map((element) => ({ element, client: parseClient(element) }))
+        .filter((item) => item.client)
+        .sort((a, b) => a.client.height - b.client.height);
+      const clientsByCode = new Map();
+      for (const item of candidates) {
+        if (!clientsByCode.has(item.client.code)) {
+          clientsByCode.set(item.client.code, item.client);
+        }
       }
 
-      const scrollers = Array.from(document.querySelectorAll("body *"))
+      const findScrollParent = (element) => {
+        let current = element?.parentElement || null;
+        while (current && current !== document.body) {
+          const style = window.getComputedStyle(current);
+          const canScroll =
+            current.scrollHeight > current.clientHeight + 16 &&
+            !/hidden/i.test(`${style.overflowY} ${style.overflow}`);
+          if (canScroll) return current;
+          current = current.parentElement;
+        }
+        return null;
+      };
+      const firstRow = candidates[0]?.element || null;
+      const rowScroller = findScrollParent(firstRow);
+      const fallbackScroller = Array.from(document.querySelectorAll("body *"))
         .filter((element) => visible(element) && element.scrollHeight > element.clientHeight + 20)
         .map((element) => ({
           element,
-          score:
-            (element.innerText || "").match(/\d{4,}\s*-/g)?.length || 0,
+          score: ((element.innerText || "").match(/\d{4,}\s*-/g) || []).length,
           overflow: element.scrollHeight - element.clientHeight,
+          area: element.clientWidth * element.clientHeight,
         }))
         .filter((item) => item.score > 0)
-        .sort((a, b) => b.score - a.score || b.overflow - a.overflow);
+        .sort((a, b) => b.score - a.score || b.overflow - a.overflow || b.area - a.area)[0]?.element;
 
-      const scroller = scrollers[0]?.element || null;
+      const scroller = rowScroller || fallbackScroller || null;
       const before = scroller ? scroller.scrollTop : 0;
       const maxTop = scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
       if (scroller && before < maxTop) {
         scroller.scrollTop = Math.min(maxTop, before + Math.max(120, Math.floor(scroller.clientHeight * 0.85)));
       }
       return {
-        clients,
+        clients: [...clientsByCode.values()],
         top: scroller ? scroller.scrollTop : 0,
         maxTop,
       };
@@ -341,6 +380,39 @@ async function collectClientOptions(page, options = {}) {
   }
 
   return normalizeClients([...byCode.values()]);
+}
+
+async function resetClientListScroll(page) {
+  await page.evaluate(() => {
+    const visible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+    const scroller = Array.from(document.querySelectorAll("body *"))
+      .filter((element) => visible(element) && element.scrollHeight > element.clientHeight + 20)
+      .map((element) => ({
+        element,
+        score: ((element.innerText || "").match(/\d{4,}\s*-/g) || []).length,
+        overflow: element.scrollHeight - element.clientHeight,
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || b.overflow - a.overflow)[0]?.element;
+    if (scroller) {
+      scroller.scrollTop = 0;
+    }
+  });
+  await page.waitForTimeout(250);
 }
 
 function mergeClientLists(...lists) {
@@ -755,7 +827,7 @@ async function probeSingleQuantityRule(page, sku, config) {
     return { sku, error: "card não encontrado" };
   }
 
-  if (start.minQty || start.maxQty) {
+  if (start.minQty) {
     return {
       sku,
       minQty: parseInteger(start.minQty),
@@ -766,7 +838,13 @@ async function probeSingleQuantityRule(page, sku, config) {
   }
 
   if (!start.addPoint) {
-    return { sku, error: "botão de adicionar não encontrado" };
+    return {
+      sku,
+      minQty: parseInteger(start.minQty),
+      maxQty: parseInteger(start.maxQty),
+      source: start.maxQty ? "site" : "",
+      error: "botão de adicionar não encontrado",
+    };
   }
 
   await page.mouse.click(start.addPoint.x, start.addPoint.y);
@@ -794,7 +872,10 @@ async function waitForQuantityInput(page, sku, timeoutMs) {
   const started = Date.now();
   let state = await getQuantityProbeState(page, sku);
   while (Date.now() - started < timeoutMs) {
-    if (state?.minQty || state?.maxQty || state?.trashPoint) {
+    if (state?.minQty) {
+      return state;
+    }
+    if ((state?.maxQty || state?.trashPoint) && Date.now() - started > 700) {
       return state;
     }
     await page.waitForTimeout(150);
@@ -848,10 +929,13 @@ async function getQuantityProbeState(page, sku) {
       Array.from(card.querySelectorAll("app-add-cart-button button, app-add-cart-button img")).find((element) =>
         /add-icon/i.test(element.getAttribute("src") || ""),
       ) || card.querySelector("app-add-cart-button button");
+    const counterText = clean(card.querySelector("app-add-cart-button")?.textContent || "");
+    const currentQty = input?.value || input?.getAttribute("value") || (counterText.match(/\b\d+\b/) || [""])[0];
+    const minQty = input?.getAttribute("min") || input?.getAttribute("step") || currentQty || "";
 
     return {
       sku: targetSku,
-      minQty: input?.getAttribute("min") || "",
+      minQty,
       maxQty: input?.getAttribute("max") || "",
       addPoint: visible(addElement) ? center(addElement) : null,
       trashPoint: visible(trash) ? center(trash) : null,
@@ -2020,7 +2104,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
 
       if (cardQtyInput) {
         const product = productsByKey.get(cardQtyInput.dataset.cardQty);
-        cardQtyInput.value = normalizeQty(cardQtyInput.value, product);
+        const qty = normalizeQty(cardQtyInput.value, product);
+        cardQtyInput.value = qty;
+        if (cart[cardQtyInput.dataset.cardQty]) {
+          cart[cardQtyInput.dataset.cardQty].qty = qty;
+          saveCart();
+        }
       }
       if (qtyInput) {
         const product = productsByKey.get(qtyInput.dataset.cartQty);
@@ -2115,7 +2204,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       const input = document.querySelector('[data-card-qty="' + cssEscape(key) + '"]');
       const qty = normalizeQty(input ? input.value : product.minQty, product);
       const current = cart[key] || { qty: 0, negotiatedPrice: product.priceNumber };
-      current.qty = normalizeQty((Number(current.qty) || 0) + qty, product);
+      current.qty = qty;
       if (current.negotiatedPrice == null) {
         current.negotiatedPrice = product.priceNumber;
       }
@@ -2165,9 +2254,13 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       const quantities = new Map(entries.map((entry) => [entry.key, normalizeQty(entry.item.qty, entry.product)]));
       document.querySelectorAll("[data-add-key]").forEach((button) => {
         const qty = quantities.get(button.dataset.addKey) || 0;
-        button.textContent = qty ? "Somar" : "Adicionar";
+        button.textContent = qty ? "Adicionado" : "Adicionar";
         button.classList.toggle("in-cart", Boolean(qty));
-        button.setAttribute("aria-label", qty ? "Somar mais deste item ao carrinho" : "Adicionar ao carrinho");
+        button.setAttribute("aria-label", qty ? "Item adicionado ao carrinho" : "Adicionar ao carrinho");
+        const input = document.querySelector('[data-card-qty="' + cssEscape(button.dataset.addKey) + '"]');
+        if (input && qty) {
+          input.value = qty;
+        }
       });
       document.querySelectorAll("[data-added-key]").forEach((note) => {
         const qty = quantities.get(note.dataset.addedKey) || 0;
