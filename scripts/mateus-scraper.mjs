@@ -1454,8 +1454,12 @@ async function writeOutputs(config, products, meta) {
   await cacheImages(products, imagesDir, config);
 
   const encryptedClientBase = await readEncryptedClientBase(config);
-  const clients = normalizeClients(meta.clients || []);
-  const normalizedMeta = { ...meta, clients };
+  const clients = encryptedClientBase ? [] : normalizeClients(meta.clients || []);
+  const normalizedMeta = {
+    ...meta,
+    clients,
+    selectedClient: encryptedClientBase ? null : meta.selectedClient || null,
+  };
   const summary = buildSummary(config, products, generatedAt, normalizedMeta);
   const html = buildCatalogHtml(config, products, summary, generatedAt, normalizedMeta, encryptedClientBase);
   const csv = buildCsv(products);
@@ -1501,7 +1505,7 @@ async function readEncryptedClientBase(config) {
     return JSON.parse(await fs.readFile(clientBasePath, "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") {
-      console.log(`Aviso: nÃ£o consegui ler a base de clientes ${clientBaseFile}: ${error.message}`);
+      console.log(`Aviso: não consegui ler a base de clientes ${clientBaseFile}: ${error.message}`);
     }
     return null;
   }
@@ -1787,7 +1791,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
     .top {
       display: grid;
-      grid-template-columns: minmax(250px, 1fr) auto minmax(260px, 420px);
+      grid-template-columns: minmax(220px, 1fr) auto minmax(240px, 420px) auto;
       gap: 10px;
       align-items: center;
       max-width: 1180px;
@@ -1850,6 +1854,16 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       background: rgba(255, 255, 255, 0.2);
       color: inherit;
       font-size: 12px;
+    }
+    .session-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .session-actions button {
+      padding: 8px 10px;
+      white-space: nowrap;
     }
     button, input, textarea {
       font: inherit;
@@ -2018,6 +2032,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       margin-top: 8px;
     }
     .cart-controls input,
+    .client-search,
     .client-select,
     .rule-bar input,
     .cart-row input {
@@ -2099,8 +2114,10 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       font-size: 12px;
       font-weight: 700;
     }
-    .client-select {
-      appearance: auto;
+    .client-hint {
+      min-height: 14px;
+      color: var(--muted);
+      font-size: 11px;
     }
     .cart-tools {
       display: grid;
@@ -2218,11 +2235,14 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
     @media (max-width: 980px) {
       .top {
-        grid-template-columns: 1fr minmax(220px, 360px);
+        grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px) auto;
       }
       .tabs {
         grid-column: 1 / -1;
         order: 3;
+      }
+      .session-actions {
+        order: 4;
       }
       .cart-tools {
         grid-template-columns: 1fr;
@@ -2234,6 +2254,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       main { padding: 12px; }
       h1 { font-size: 18px; }
       .tabs { grid-column: auto; }
+      .session-actions {
+        width: 100%;
+      }
+      .session-actions button {
+        flex: 1 1 0;
+      }
       .tab-button { padding: 7px 10px; }
       .cart-toolbar { padding: 10px; }
       .cart-header {
@@ -2313,8 +2339,8 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     hasAuthGate
       ? `<div class="auth-screen">
     <div class="auth-card">
-      <h1>Acesso ao catÃ¡logo</h1>
-      <p>Entre para abrir o catÃ¡logo, carrinho e base de clientes.</p>
+      <h1>Acesso ao catálogo</h1>
+      <p>Entre para abrir o catálogo, carrinho e base de clientes.</p>
       <form id="authForm">
         <input id="authEmail" type="email" autocomplete="username" placeholder="Email" value="max.distac@gmail.com">
         <input id="authPassword" type="password" autocomplete="current-password" placeholder="Senha">
@@ -2331,12 +2357,16 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         <h1>Mateus Mais - Produtos disponíveis</h1>
         <div class="date">${escapeHtml(formatDateTime(generatedAt, config.timezone))}</div>
       </div>
-      <nav class="tabs" aria-label="PÃ¡ginas do catÃ¡logo">
+      <nav class="tabs" aria-label="Páginas do catálogo">
         <button type="button" class="tab-button active" data-view-target="products">Produtos</button>
         <button type="button" class="tab-button" data-view-target="cart">Carrinho <span id="cartBadge" class="cart-badge">0</span></button>
         <button type="button" class="tab-button" data-view-target="summary">Resumo</button>
       </nav>
       <input id="search" type="search" autocomplete="off" placeholder="Buscar produto, SKU, marca ou tamanho">
+      <div class="session-actions">
+        <button id="changePassword" type="button" class="secondary">Senha</button>
+        <button id="logout" type="button" class="secondary">Sair</button>
+      </div>
     </div>
   </header>
   <main>
@@ -2363,8 +2393,10 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       </div>
       <div class="cart-tools">
       <div class="client-bar">
-        <label for="clientSelect">Cliente para o modelo de alteração</label>
-        <select id="clientSelect" class="client-select"></select>
+        <label for="clientSearch">Cliente para o modelo de alteração</label>
+        <input id="clientSearch" class="client-search" type="search" list="clientOptions" autocomplete="off" placeholder="Digite código, documento ou nome">
+        <datalist id="clientOptions"></datalist>
+        <div id="clientHint" class="client-hint"></div>
       </div>
       <div class="rule-bar">
         <input id="linePattern" type="text" autocomplete="off" placeholder="Linha/modelo: Slim Square">
@@ -2406,17 +2438,25 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     const priceTemplate = JSON.parse(document.getElementById("price-template").textContent);
     const cartKey = "mateus-fictitious-cart-v2";
     const clientKey = "mateus-selected-client-v1";
+    const authSessionKey = "mateus-auth-session-v1";
+    const localClientBaseKey = "mateus-local-client-base-v1";
+    const authEmail = (encryptedClientBase && encryptedClientBase.email) || "max.distac@gmail.com";
     const cartItems = document.getElementById("cartItems");
     const cartCount = document.getElementById("cartCount");
     const cartBadge = document.getElementById("cartBadge");
     const cartTotalQty = document.getElementById("cartTotalQty");
     const cartTotalValue = document.getElementById("cartTotalValue");
     const requestText = document.getElementById("requestText");
-    const clientSelect = document.getElementById("clientSelect");
+    const clientSearch = document.getElementById("clientSearch");
+    const clientOptions = document.getElementById("clientOptions");
+    const clientHint = document.getElementById("clientHint");
+    const changePasswordButton = document.getElementById("changePassword");
+    const logoutButton = document.getElementById("logout");
     const linePattern = document.getElementById("linePattern");
     const linePrice = document.getElementById("linePrice");
     const pwaStatus = document.getElementById("pwaStatus");
     let cart = readCart();
+    let selectedClientCode = localStorage.getItem(clientKey) || "";
 
     document.querySelectorAll("[data-view-target]").forEach((button) => {
       button.addEventListener("click", () => setActiveView(button.dataset.viewTarget));
@@ -2507,10 +2547,16 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       saveCart();
     });
 
-    clientSelect.addEventListener("change", () => {
-      localStorage.setItem(clientKey, clientSelect.value || "");
-      renderCart();
-    });
+    if (clientSearch) {
+      clientSearch.addEventListener("input", updateSelectedClientFromSearch);
+      clientSearch.addEventListener("change", updateSelectedClientFromSearch);
+    }
+    if (logoutButton) {
+      logoutButton.addEventListener("click", logoutCatalog);
+    }
+    if (changePasswordButton) {
+      changePasswordButton.addEventListener("click", changeLocalPassword);
+    }
 
     document.getElementById("copyRequest").addEventListener("click", async () => {
       requestText.select();
@@ -2522,11 +2568,16 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     });
 
     function initializeCatalog() {
-      if (encryptedClientBase) {
+      const savedSession = readAuthSession();
+      if (savedSession) {
+        unlockCatalog(savedSession.clients, { saveSession: false });
+        return;
+      }
+      if (encryptedClientBase || readLocalClientBase()) {
         setupAuthGate();
         return;
       }
-      unlockCatalog(clients);
+      unlockCatalog(clients, { saveSession: false });
     }
 
     function setupAuthGate() {
@@ -2534,17 +2585,22 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       const emailInput = document.getElementById("authEmail");
       const passwordInput = document.getElementById("authPassword");
       const error = document.getElementById("authError");
+      const localBase = readLocalClientBase();
+      const loginBase = localBase || encryptedClientBase;
+      if (emailInput) {
+        emailInput.value = (loginBase && loginBase.email) || authEmail;
+      }
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         error.textContent = "";
         const email = normalizeForMatch(emailInput.value);
-        if (email !== normalizeForMatch(encryptedClientBase.email || "max.distac@gmail.com")) {
+        if (!loginBase || email !== normalizeForMatch(loginBase.email || authEmail)) {
           error.textContent = "Email ou senha incorretos.";
           return;
         }
         try {
-          const decrypted = await decryptClientBase(encryptedClientBase, passwordInput.value);
-          unlockCatalog(mergeBrowserClients(clients, decrypted.clients || decrypted));
+          const decrypted = await decryptClientBase(loginBase, passwordInput.value);
+          unlockCatalog(decrypted.clients || decrypted, { saveSession: true, email: loginBase.email || authEmail });
           passwordInput.value = "";
         } catch {
           error.textContent = "Email ou senha incorretos.";
@@ -2552,14 +2608,87 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       });
     }
 
-    function unlockCatalog(unlockedClients) {
-      clients = mergeBrowserClients(unlockedClients || []);
+    function unlockCatalog(unlockedClients, options = {}) {
+      clients = mergeBrowserClients(clients, unlockedClients || []);
       clientsByCode = new Map(clients.map((client) => [client.code, client]));
       document.body.dataset.auth = "open";
-      setupClientSelect();
+      setupClientSearch();
       setActiveView(viewFromHash(), { updateHash: false, keepScroll: true });
       renderCart();
+      if (options.saveSession) {
+        saveAuthSession(options.email || authEmail);
+      }
       registerOfflineCache();
+    }
+
+    function readAuthSession() {
+      try {
+        const session = JSON.parse(localStorage.getItem(authSessionKey) || "null");
+        if (session && Array.isArray(session.clients) && session.clients.length) {
+          return session;
+        }
+      } catch {
+        localStorage.removeItem(authSessionKey);
+      }
+      return null;
+    }
+
+    function saveAuthSession(email) {
+      try {
+        localStorage.setItem(
+          authSessionKey,
+          JSON.stringify({
+            email: email || authEmail,
+            savedAt: new Date().toISOString(),
+            clients,
+          }),
+        );
+      } catch {
+        showPwaStatus("Nao consegui salvar a sessao neste aparelho.");
+      }
+    }
+
+    function readLocalClientBase() {
+      try {
+        return JSON.parse(localStorage.getItem(localClientBaseKey) || "null");
+      } catch {
+        localStorage.removeItem(localClientBaseKey);
+        return null;
+      }
+    }
+
+    function logoutCatalog() {
+      localStorage.removeItem(authSessionKey);
+      document.body.dataset.auth = encryptedClientBase || readLocalClientBase() ? "locked" : "open";
+      window.location.reload();
+    }
+
+    async function changeLocalPassword() {
+      if (!clients.length) {
+        showPwaStatus("Entre no catalogo antes de trocar a senha.");
+        return;
+      }
+      const first = window.prompt("Digite a nova senha para este aparelho:");
+      if (!first) {
+        return;
+      }
+      if (first.length < 6) {
+        showPwaStatus("Use uma senha com pelo menos 6 caracteres.");
+        return;
+      }
+      const second = window.prompt("Repita a nova senha:");
+      if (first !== second) {
+        showPwaStatus("As senhas nao conferem.");
+        return;
+      }
+      try {
+        const sealed = await encryptClientBase({ clients }, first, authEmail);
+        localStorage.setItem(localClientBaseKey, JSON.stringify(sealed));
+        saveAuthSession(authEmail);
+        showPwaStatus("Senha alterada neste aparelho. Use Sair para testar o novo acesso.");
+      } catch {
+        showPwaStatus("Nao consegui trocar a senha neste navegador.");
+      }
     }
 
     async function decryptClientBase(sealed, password) {
@@ -2584,8 +2713,53 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       return JSON.parse(new TextDecoder().decode(plainBuffer));
     }
 
+    async function encryptClientBase(payload, password, email) {
+      const encoder = new TextEncoder();
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
+        "deriveKey",
+      ]);
+      const key = await crypto.subtle.deriveKey(
+        {
+          name: "PBKDF2",
+          salt,
+          iterations: 210000,
+          hash: "SHA-256",
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt"],
+      );
+      const sealedBytes = new Uint8Array(
+        await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(JSON.stringify(payload))),
+      );
+      const tagLength = 16;
+      return {
+        version: 1,
+        source: "local-browser",
+        email: email || authEmail,
+        algorithm: "AES-256-GCM",
+        kdf: "PBKDF2-SHA256",
+        iterations: 210000,
+        salt: bytesToBase64(salt),
+        iv: bytesToBase64(iv),
+        tag: bytesToBase64(sealedBytes.slice(sealedBytes.length - tagLength)),
+        ciphertext: bytesToBase64(sealedBytes.slice(0, sealedBytes.length - tagLength)),
+      };
+    }
+
     function base64ToBytes(value) {
       return Uint8Array.from(atob(value || ""), (char) => char.charCodeAt(0));
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+      }
+      return btoa(binary);
     }
 
     function mergeBrowserClients(...lists) {
@@ -2637,22 +2811,95 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
     }
 
-    function setupClientSelect() {
-      const saved = localStorage.getItem(clientKey) || "";
-      const selectedClient = clients.find((client) => client.selected) || clients[0];
-      const selectedCode = saved || selectedClient?.code || "";
-      const options = ['<option value="">Cliente padrão do modelo</option>'].concat(
-        clients.map((client) => {
-          const selected = client.code === selectedCode ? " selected" : "";
-          return '<option value="' + escapeText(client.code) + '"' + selected + '>'
-            + escapeText(client.code + " - " + client.name)
-            + '</option>';
-        }),
-      );
-      clientSelect.innerHTML = options.join("");
-      if (selectedCode && clientsByCode.has(selectedCode)) {
-        clientSelect.value = selectedCode;
+    function setupClientSearch() {
+      const saved = selectedClientCode || localStorage.getItem(clientKey) || "";
+      const defaultClient = clients.find((client) => client.selected) || clients[0];
+      selectedClientCode = saved && clientsByCode.has(saved) ? saved : defaultClient?.code || "";
+      renderClientOptions(clients);
+      syncClientSearchInput();
+      localStorage.setItem(clientKey, selectedClientCode || "");
+    }
+
+    function renderClientOptions(list) {
+      if (!clientOptions) {
+        return;
       }
+      const options = ['<option value="Cliente padrão do modelo"></option>'].concat(
+        list.slice(0, 500).map((client) => '<option value="' + escapeText(clientLabel(client)) + '"></option>'),
+      );
+      clientOptions.innerHTML = options.join("");
+    }
+
+    function updateSelectedClientFromSearch() {
+      if (!clientSearch) {
+        return;
+      }
+      const value = clientSearch.value || "";
+      const directCode = clientCodeFromText(value);
+      if (!value.trim() || normalizeForMatch(value) === normalizeForMatch("Cliente padrão do modelo")) {
+        selectedClientCode = "";
+        localStorage.setItem(clientKey, "");
+        setClientHint("");
+        renderCart();
+        return;
+      }
+      if (directCode && clientsByCode.has(directCode)) {
+        selectedClientCode = directCode;
+        localStorage.setItem(clientKey, selectedClientCode);
+        setClientHint("Cliente selecionado.");
+        renderCart();
+        return;
+      }
+
+      const matches = findClientMatches(value, 20);
+      renderClientOptions(matches.length ? matches : clients);
+      if (matches.length === 1) {
+        selectedClientCode = matches[0].code;
+        localStorage.setItem(clientKey, selectedClientCode);
+        setClientHint("Cliente selecionado.");
+      } else {
+        selectedClientCode = "";
+        localStorage.setItem(clientKey, "");
+        setClientHint(matches.length ? matches.length + " cliente(s) encontrado(s). Escolha um da lista." : "Nenhum cliente encontrado.");
+      }
+      renderCart();
+    }
+
+    function syncClientSearchInput() {
+      if (!clientSearch) {
+        return;
+      }
+      const client = clientsByCode.get(selectedClientCode || "");
+      clientSearch.value = client ? clientLabel(client) : "Cliente padrão do modelo";
+      setClientHint(client ? "" : "Sem cliente especifico no modelo.");
+    }
+
+    function setClientHint(message) {
+      if (clientHint) {
+        clientHint.textContent = message || "";
+      }
+    }
+
+    function clientCodeFromText(value) {
+      const match = String(value || "").match(/^\s*(\d{4,})\b/);
+      return match ? match[1] : "";
+    }
+
+    function findClientMatches(query, limit = 20) {
+      const tokens = normalizeForMatch(query).split(" ").filter(Boolean);
+      if (!tokens.length) {
+        return [];
+      }
+      return clients
+        .filter((client) => {
+          const haystack = normalizeForMatch([client.code, client.document, client.name, client.tradeName].join(" "));
+          return tokens.every((token) => haystack.includes(token));
+        })
+        .slice(0, limit);
+    }
+
+    function clientLabel(client) {
+      return client ? client.code + " - " + client.name : "";
     }
 
     function addToCart(key) {
@@ -3038,7 +3285,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
 
     function selectedClientLine() {
-      const client = clientsByCode.get(clientSelect.value || "");
+      const client = clientsByCode.get(selectedClientCode || "");
       if (!client) {
         return priceTemplate.client;
       }

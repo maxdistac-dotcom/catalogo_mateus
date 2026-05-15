@@ -170,7 +170,7 @@ Se a sessão expirar, rode `npm run login` novamente e atualize o secret `MATEUS
 
 O catálogo usa `config\clientes-base.enc.json`, gerado a partir da planilha `BASE Russas Mateus.xlsx`, para preencher a lista `Cliente para o modelo de alteração` mesmo quando o site não entrega todos os clientes no scrape.
 
-Essa base fica criptografada no Pages. A senha de abertura não deve ser publicada no repositório. Para trocar a senha de forma global, é preciso gerar novamente o arquivo criptografado com a nova senha e publicar o Pages outra vez.
+Essa base fica criptografada no Pages. A senha de abertura não deve ser publicada no repositório. O botão `Senha` troca a senha apenas no navegador/aparelho em uso e salva uma nova cópia local criptografada da base; o botão `Sair` apaga a sessão salva desse aparelho. Para trocar a senha de forma global, é preciso gerar novamente o arquivo criptografado com a nova senha e publicar o Pages outra vez.
 
 ## Telegram opcional local
 
