@@ -1453,10 +1453,11 @@ async function writeOutputs(config, products, meta) {
   console.log("Gerando arquivos...");
   await cacheImages(products, imagesDir, config);
 
+  const encryptedClientBase = await readEncryptedClientBase(config);
   const clients = normalizeClients(meta.clients || []);
   const normalizedMeta = { ...meta, clients };
   const summary = buildSummary(config, products, generatedAt, normalizedMeta);
-  const html = buildCatalogHtml(config, products, summary, generatedAt, normalizedMeta);
+  const html = buildCatalogHtml(config, products, summary, generatedAt, normalizedMeta, encryptedClientBase);
   const csv = buildCsv(products);
   const manifest = buildWebManifest(config);
   const serviceWorker = buildServiceWorker(products, generatedAt, config);
@@ -1478,7 +1479,7 @@ async function writeOutputs(config, products, meta) {
   await fs.writeFile(runFiles.index, html, "utf8");
   await fs.writeFile(runFiles.csv, "\uFEFF" + csv, "utf8");
   await fs.writeFile(runFiles.json, JSON.stringify({ generatedAt, meta: normalizedMeta, products }, null, 2), "utf8");
-  await fs.writeFile(runFiles.clients, JSON.stringify({ generatedAt, clients }, null, 2), "utf8");
+  await fs.writeFile(runFiles.clients, JSON.stringify({ generatedAt, clients, encryptedClientBase }, null, 2), "utf8");
   await fs.writeFile(runFiles.summary, summary, "utf8");
   await fs.writeFile(runFiles.manifest, manifest, "utf8");
   await fs.writeFile(runFiles.serviceWorker, serviceWorker, "utf8");
@@ -1491,6 +1492,19 @@ async function writeOutputs(config, products, meta) {
   console.log(`Produtos disponíveis: ${products.length}`);
   console.log(`Catálogo: ${runFiles.html}`);
   console.log(`Planilha CSV: ${runFiles.csv}`);
+}
+
+async function readEncryptedClientBase(config) {
+  const clientBaseFile = config.clientBaseEncryptedFile || "config/clientes-base.enc.json";
+  const clientBasePath = absoluteFromProject(clientBaseFile);
+  try {
+    return JSON.parse(await fs.readFile(clientBasePath, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.log(`Aviso: nÃ£o consegui ler a base de clientes ${clientBaseFile}: ${error.message}`);
+    }
+    return null;
+  }
 }
 
 async function publishLatest(outputRoot, runDir, runFiles) {
@@ -1664,12 +1678,13 @@ function csvCell(value) {
   return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
+function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, encryptedClientBase = null) {
   const catalogProducts = products.map((product, index) => ({
     ...product,
     cartKey: product.sku || `item-${index + 1}`,
   }));
   const clients = normalizeClients(meta.clients || []);
+  const hasAuthGate = Boolean(encryptedClientBase);
   const groups = config.products.map((group) => ({
     ...group,
     products: catalogProducts.filter((product) => product.groupId === group.id),
@@ -1712,56 +1727,111 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       background: var(--soft);
       overflow-x: hidden;
     }
+    body[data-auth="locked"] header,
+    body[data-auth="locked"] main,
+    body[data-auth="locked"] footer {
+      display: none;
+    }
+    .auth-screen {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: var(--soft);
+    }
+    body[data-auth="open"] .auth-screen {
+      display: none;
+    }
+    .auth-card {
+      width: min(420px, 100%);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 16px 36px rgba(23, 32, 51, 0.12);
+    }
+    .auth-card h1 {
+      white-space: normal;
+      margin-bottom: 4px;
+    }
+    .auth-card p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .auth-card form {
+      display: grid;
+      gap: 10px;
+    }
+    .auth-card input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      font-size: 15px;
+    }
+    .auth-error {
+      min-height: 18px;
+      color: var(--danger);
+      font-size: 12px;
+      font-weight: 700;
+    }
     header {
       position: sticky;
       top: 0;
-      z-index: 10;
+      z-index: 30;
       background: var(--paper);
       border-bottom: 1px solid var(--line);
-      padding: 14px 18px;
+      padding: 8px 18px;
     }
     .top {
       display: grid;
-      grid-template-columns: 1fr minmax(220px, 420px);
-      gap: 14px;
+      grid-template-columns: minmax(250px, 1fr) auto minmax(260px, 420px);
+      gap: 10px;
       align-items: center;
       max-width: 1180px;
       margin: 0 auto;
     }
+    .title-block {
+      min-width: 0;
+    }
     h1 {
       margin: 0;
-      font-size: 22px;
+      font-size: 20px;
       line-height: 1.2;
       letter-spacing: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .date {
-      margin-top: 4px;
+      margin-top: 2px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
     }
     input[type="search"] {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 12px 13px;
+      padding: 9px 12px;
       font-size: 15px;
       background: #fff;
       color: var(--ink);
     }
     .tabs {
-      max-width: 1180px;
-      margin: 12px auto 0;
       display: flex;
       gap: 8px;
       overflow-x: auto;
       padding-bottom: 2px;
+      min-width: 0;
     }
     .tab-button {
       flex: 0 0 auto;
       border-color: var(--line);
       background: #fff;
       color: var(--ink);
-      padding: 9px 12px;
+      padding: 8px 11px;
       white-space: nowrap;
     }
     .tab-button.active {
@@ -1984,23 +2054,44 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 14px;
+      padding: 0;
+      overflow: visible;
+    }
+    .cart-toolbar {
+      position: sticky;
+      top: calc(var(--header-height, 64px) - 1px);
+      z-index: 20;
+      background: var(--paper);
+      border-bottom: 1px solid var(--line);
+      border-radius: 8px 8px 0 0;
+      padding: 12px 14px;
+      box-shadow: 0 8px 16px rgba(23, 32, 51, 0.06);
+    }
+    .cart-body {
+      padding: 12px 14px 14px;
     }
     .cart-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
     .cart-header h2 {
       margin: 0;
     }
+    .cart-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     .client-bar {
       display: grid;
       grid-template-columns: minmax(160px, 1fr);
-      gap: 6px;
-      margin-bottom: 12px;
+      gap: 4px;
+      min-width: 0;
     }
     .client-bar label,
     .request-box label {
@@ -2011,15 +2102,32 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
     .client-select {
       appearance: auto;
     }
+    .cart-tools {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
+      gap: 8px;
+      align-items: end;
+    }
     .rule-bar {
       display: grid;
       grid-template-columns: minmax(160px, 1fr) minmax(110px, 150px) auto;
       gap: 8px;
-      padding: 10px;
+      padding: 0;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #f8fafc;
-      margin-bottom: 12px;
+      background: transparent;
+    }
+    .rule-bar input {
+      border: 0;
+      border-right: 1px solid var(--line);
+      border-radius: 0;
+    }
+    .rule-bar input:first-child {
+      border-radius: 8px 0 0 8px;
+    }
+    .rule-bar button {
+      border-radius: 0 8px 8px 0;
+      border: 0;
     }
     .cart-items {
       display: grid;
@@ -2108,12 +2216,46 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       font-size: 12px;
       white-space: pre-wrap;
     }
+    @media (max-width: 980px) {
+      .top {
+        grid-template-columns: 1fr minmax(220px, 360px);
+      }
+      .tabs {
+        grid-column: 1 / -1;
+        order: 3;
+      }
+      .cart-tools {
+        grid-template-columns: 1fr;
+      }
+    }
     @media (max-width: 720px) {
       .top { grid-template-columns: 1fr; }
-      header { padding: 12px; }
+      header { padding: 8px 10px; }
       main { padding: 12px; }
+      h1 { font-size: 18px; }
+      .tabs { grid-column: auto; }
+      .tab-button { padding: 7px 10px; }
+      .cart-toolbar { padding: 10px; }
+      .cart-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .cart-actions {
+        width: 100%;
+        justify-content: stretch;
+      }
+      .cart-actions button {
+        flex: 1 1 0;
+      }
       .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-      .rule-bar,
+      .rule-bar {
+        grid-template-columns: minmax(0, 1fr) minmax(82px, 96px) auto;
+      }
+      .rule-bar input,
+      .rule-bar button {
+        padding: 8px 7px;
+        font-size: 14px;
+      }
       .cart-row {
         grid-template-columns: 1fr;
       }
@@ -2147,22 +2289,55 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
         gap: 2px;
       }
     }
+    @media (max-width: 430px) {
+      .rule-bar {
+        grid-template-columns: minmax(0, 1fr) minmax(78px, 96px);
+      }
+      .rule-bar input,
+      .rule-bar input:first-child {
+        border-radius: 8px;
+        border: 1px solid var(--line);
+      }
+      .rule-bar button {
+        border-radius: 8px;
+        grid-column: 1 / -1;
+      }
+      .rule-bar button {
+        border-color: var(--blue);
+      }
+    }
   </style>
 </head>
-<body data-active-view="products">
+<body data-active-view="products" data-auth="${hasAuthGate ? "locked" : "open"}">
+  ${
+    hasAuthGate
+      ? `<div class="auth-screen">
+    <div class="auth-card">
+      <h1>Acesso ao catÃ¡logo</h1>
+      <p>Entre para abrir o catÃ¡logo, carrinho e base de clientes.</p>
+      <form id="authForm">
+        <input id="authEmail" type="email" autocomplete="username" placeholder="Email" value="max.distac@gmail.com">
+        <input id="authPassword" type="password" autocomplete="current-password" placeholder="Senha">
+        <button type="submit">Entrar</button>
+        <div id="authError" class="auth-error"></div>
+      </form>
+    </div>
+  </div>`
+      : ""
+  }
   <header>
     <div class="top">
-      <div>
+      <div class="title-block">
         <h1>Mateus Mais - Produtos disponíveis</h1>
         <div class="date">${escapeHtml(formatDateTime(generatedAt, config.timezone))}</div>
       </div>
+      <nav class="tabs" aria-label="PÃ¡ginas do catÃ¡logo">
+        <button type="button" class="tab-button active" data-view-target="products">Produtos</button>
+        <button type="button" class="tab-button" data-view-target="cart">Carrinho <span id="cartBadge" class="cart-badge">0</span></button>
+        <button type="button" class="tab-button" data-view-target="summary">Resumo</button>
+      </nav>
       <input id="search" type="search" autocomplete="off" placeholder="Buscar produto, SKU, marca ou tamanho">
     </div>
-    <nav class="tabs" aria-label="Páginas do catálogo">
-      <button type="button" class="tab-button active" data-view-target="products">Produtos</button>
-      <button type="button" class="tab-button" data-view-target="cart">Carrinho <span id="cartBadge" class="cart-badge">0</span></button>
-      <button type="button" class="tab-button" data-view-target="summary">Resumo</button>
-    </nav>
   </header>
   <main>
     <div class="summary">
@@ -2178,19 +2353,27 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
     </div>
     <pre class="summary-text">${escapeHtml(summary)}</pre>
     <section class="cart-section" data-cart-panel>
+      <div class="cart-toolbar">
       <div class="cart-header">
         <h2>Carrinho fictício (<span id="cartCount">0</span>)</h2>
-        <button id="clearCart" type="button" class="danger">Limpar</button>
+        <div class="cart-actions">
+          <button id="exportImportCart" type="button" class="secondary">Exportar planilha</button>
+          <button id="clearCart" type="button" class="danger">Limpar</button>
+        </div>
       </div>
+      <div class="cart-tools">
       <div class="client-bar">
         <label for="clientSelect">Cliente para o modelo de alteração</label>
         <select id="clientSelect" class="client-select"></select>
       </div>
       <div class="rule-bar">
-        <input id="linePattern" type="text" autocomplete="off" placeholder="Linha de produto: Havaianas Brasil">
-        <input id="linePrice" type="text" inputmode="decimal" autocomplete="off" placeholder="33,50">
-        <button id="applyLinePrice" type="button">Aplicar preço</button>
+        <input id="linePattern" type="text" autocomplete="off" placeholder="Linha/modelo: Slim Square">
+        <input id="linePrice" type="text" inputmode="decimal" autocomplete="off" placeholder="Preço">
+        <button id="applyLinePrice" type="button">Aplicar</button>
       </div>
+      </div>
+      </div>
+      <div class="cart-body">
       <div id="cartItems" class="cart-items"></div>
       <div class="cart-total">
         <span>Itens: <strong id="cartTotalQty">0</strong></span>
@@ -2201,6 +2384,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
         <textarea id="requestText" readonly></textarea>
         <button id="copyRequest" type="button" class="secondary">Copiar solicitação</button>
       </div>
+      </div>
     </section>
     ${groups.map(renderGroup).join("\n")}
   </main>
@@ -2208,6 +2392,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
   <div id="pwaStatus" class="pwa-status"></div>
   <script type="application/json" id="products-data">${safeJsonForScript(catalogProducts)}</script>
   <script type="application/json" id="clients-data">${safeJsonForScript(clients)}</script>
+  <script type="application/json" id="encrypted-clients-data">${safeJsonForScript(encryptedClientBase)}</script>
   <script type="application/json" id="price-template">${safeJsonForScript(priceRequestTemplate)}</script>
   <script>
     const input = document.getElementById("search");
@@ -2215,8 +2400,9 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
     const sections = Array.from(document.querySelectorAll("section[data-group]"));
     const products = JSON.parse(document.getElementById("products-data").textContent);
     const productsByKey = new Map(products.map((product) => [product.cartKey, product]));
-    const clients = JSON.parse(document.getElementById("clients-data").textContent);
-    const clientsByCode = new Map(clients.map((client) => [client.code, client]));
+    let clients = JSON.parse(document.getElementById("clients-data").textContent);
+    let clientsByCode = new Map(clients.map((client) => [client.code, client]));
+    const encryptedClientBase = JSON.parse(document.getElementById("encrypted-clients-data").textContent);
     const priceTemplate = JSON.parse(document.getElementById("price-template").textContent);
     const cartKey = "mateus-fictitious-cart-v2";
     const clientKey = "mateus-selected-client-v1";
@@ -2227,6 +2413,8 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
     const cartTotalValue = document.getElementById("cartTotalValue");
     const requestText = document.getElementById("requestText");
     const clientSelect = document.getElementById("clientSelect");
+    const linePattern = document.getElementById("linePattern");
+    const linePrice = document.getElementById("linePrice");
     const pwaStatus = document.getElementById("pwaStatus");
     let cart = readCart();
 
@@ -2234,8 +2422,9 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       button.addEventListener("click", () => setActiveView(button.dataset.viewTarget));
     });
     window.addEventListener("hashchange", () => setActiveView(viewFromHash(), { updateHash: false }));
-    setupClientSelect();
-    setActiveView(viewFromHash(), { updateHash: false, keepScroll: true });
+    window.addEventListener("resize", updateStickyOffsets);
+    updateStickyOffsets();
+    initializeCatalog();
 
     input.addEventListener("input", () => {
       const tokens = normalizeForMatch(input.value).split(" ").filter(Boolean);
@@ -2294,9 +2483,18 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       saveCart();
     });
 
+    document.getElementById("exportImportCart").addEventListener("click", exportImportCart);
+
+    linePattern.addEventListener("input", () => {
+      const suggested = suggestedPriceForLine(linePattern.value);
+      if (suggested != null) {
+        linePrice.value = formatMoney(suggested);
+      }
+    });
+
     document.getElementById("applyLinePrice").addEventListener("click", () => {
-      const pattern = document.getElementById("linePattern").value;
-      const price = parseMoney(document.getElementById("linePrice").value);
+      const pattern = linePattern.value;
+      const price = parseMoney(linePrice.value);
       if (!pattern.trim() || price == null) {
         return;
       }
@@ -2323,8 +2521,95 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       }
     });
 
-    renderCart();
-    registerOfflineCache();
+    function initializeCatalog() {
+      if (encryptedClientBase) {
+        setupAuthGate();
+        return;
+      }
+      unlockCatalog(clients);
+    }
+
+    function setupAuthGate() {
+      const form = document.getElementById("authForm");
+      const emailInput = document.getElementById("authEmail");
+      const passwordInput = document.getElementById("authPassword");
+      const error = document.getElementById("authError");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        const email = normalizeForMatch(emailInput.value);
+        if (email !== normalizeForMatch(encryptedClientBase.email || "max.distac@gmail.com")) {
+          error.textContent = "Email ou senha incorretos.";
+          return;
+        }
+        try {
+          const decrypted = await decryptClientBase(encryptedClientBase, passwordInput.value);
+          unlockCatalog(mergeBrowserClients(clients, decrypted.clients || decrypted));
+          passwordInput.value = "";
+        } catch {
+          error.textContent = "Email ou senha incorretos.";
+        }
+      });
+    }
+
+    function unlockCatalog(unlockedClients) {
+      clients = mergeBrowserClients(unlockedClients || []);
+      clientsByCode = new Map(clients.map((client) => [client.code, client]));
+      document.body.dataset.auth = "open";
+      setupClientSelect();
+      setActiveView(viewFromHash(), { updateHash: false, keepScroll: true });
+      renderCart();
+      registerOfflineCache();
+    }
+
+    async function decryptClientBase(sealed, password) {
+      const encoder = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
+        "deriveKey",
+      ]);
+      const key = await crypto.subtle.deriveKey(
+        {
+          name: "PBKDF2",
+          salt: base64ToBytes(sealed.salt),
+          iterations: sealed.iterations || 210000,
+          hash: "SHA-256",
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"],
+      );
+      const cipherBytes = concatBytes([base64ToBytes(sealed.ciphertext), base64ToBytes(sealed.tag)]);
+      const plainBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(sealed.iv) }, key, cipherBytes);
+      return JSON.parse(new TextDecoder().decode(plainBuffer));
+    }
+
+    function base64ToBytes(value) {
+      return Uint8Array.from(atob(value || ""), (char) => char.charCodeAt(0));
+    }
+
+    function mergeBrowserClients(...lists) {
+      const byCode = new Map();
+      for (const client of lists.flat().filter(Boolean)) {
+        const code = String(client.code || "").trim();
+        const name = String(client.name || "").replace(/\s+/g, " ").trim();
+        if (!code || !name) {
+          continue;
+        }
+        const current = byCode.get(code) || {};
+        byCode.set(code, {
+          ...current,
+          ...client,
+          code,
+          name,
+          selected: Boolean(current.selected || client.selected),
+        });
+      }
+      return [...byCode.values()].sort((a, b) => {
+        if (a.selected !== b.selected) return a.selected ? -1 : 1;
+        return a.name.localeCompare(b.name, "pt-BR");
+      });
+    }
 
     function viewFromHash() {
       const view = (window.location.hash || "").replace("#", "");
@@ -2341,6 +2626,14 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       }
       if (!options.keepScroll) {
         window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      updateStickyOffsets();
+    }
+
+    function updateStickyOffsets() {
+      const header = document.querySelector("header");
+      if (header) {
+        document.documentElement.style.setProperty("--header-height", header.offsetHeight + "px");
       }
     }
 
@@ -2391,10 +2684,14 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       renderCart();
     }
 
-    function renderCart() {
-      const entries = Object.entries(cart)
+    function cartEntries() {
+      return Object.entries(cart)
         .map(([key, item]) => ({ key, item, product: productsByKey.get(key) }))
         .filter((entry) => entry.product);
+    }
+
+    function renderCart() {
+      const entries = cartEntries();
 
       cartCount.textContent = String(entries.length);
       cartBadge.textContent = String(entries.length);
@@ -2414,6 +2711,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       cartTotalValue.textContent = "R$ " + formatMoney(totalValue);
       requestText.value = buildRequestText(entries);
       updateProductButtons(entries);
+      if (linePattern.value.trim() && document.activeElement !== linePrice) {
+        const suggested = suggestedPriceForLine(linePattern.value);
+        if (suggested != null) {
+          linePrice.value = formatMoney(suggested);
+        }
+      }
     }
 
     function updateProductButtons(entries) {
@@ -2470,6 +2773,270 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       ].join("\\n");
     }
 
+    function exportImportCart() {
+      const entries = cartEntries();
+      if (!entries.length) {
+        showPwaStatus("Carrinho vazio. Adicione itens antes de exportar.");
+        return;
+      }
+
+      const rows = [["sku", "quantidade"]];
+      for (const entry of entries) {
+        if (!entry.product.sku) {
+          continue;
+        }
+        rows.push([String(entry.product.sku), normalizeQty(entry.item.qty, entry.product)]);
+      }
+
+      if (rows.length === 1) {
+        showPwaStatus("Nenhum SKU válido no carrinho para exportar.");
+        return;
+      }
+
+      const blob = createXlsxBlob(rows, "Página1");
+      downloadBlob(blob, "import_cart_" + exportStamp() + ".xlsx");
+    }
+
+    function createXlsxBlob(rows, sheetName) {
+      const sheetXml = buildWorksheetXml(rows);
+      const files = [
+        {
+          name: "[Content_Types].xml",
+          content:
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+            '<Default Extension="xml" ContentType="application/xml"/>' +
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+            '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+            "</Types>",
+        },
+        {
+          name: "_rels/.rels",
+          content:
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+            "</Relationships>",
+        },
+        {
+          name: "xl/workbook.xml",
+          content:
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+            '<sheets><sheet name="' +
+            xmlEscape(sheetName) +
+            '" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        },
+        {
+          name: "xl/_rels/workbook.xml.rels",
+          content:
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+            '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+            "</Relationships>",
+        },
+        {
+          name: "xl/styles.xml",
+          content:
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+            '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+            '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+            '<borders count="1"><border/></borders>' +
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+            '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+            '<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
+            "</styleSheet>",
+        },
+        { name: "xl/worksheets/sheet1.xml", content: sheetXml },
+      ];
+
+      return new Blob([createZip(files)], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+    }
+
+    function buildWorksheetXml(rows) {
+      const sheetRows = rows
+        .map((row, rowIndex) => {
+          const rowNumber = rowIndex + 1;
+          const cells = row
+            .map((value, colIndex) => {
+              const cellRef = columnName(colIndex + 1) + rowNumber;
+              if (typeof value === "number") {
+                return '<c r="' + cellRef + '"><v>' + value + "</v></c>";
+              }
+              return '<c r="' + cellRef + '" t="inlineStr"><is><t>' + xmlEscape(value) + "</t></is></c>";
+            })
+            .join("");
+          return '<row r="' + rowNumber + '">' + cells + "</row>";
+        })
+        .join("");
+
+      return (
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<dimension ref="A1:B' +
+        rows.length +
+        '"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>' +
+        "<sheetData>" +
+        sheetRows +
+        "</sheetData></worksheet>"
+      );
+    }
+
+    function createZip(files) {
+      const encoder = new TextEncoder();
+      const localParts = [];
+      const centralParts = [];
+      let offset = 0;
+
+      for (const file of files) {
+        const nameBytes = encoder.encode(file.name);
+        const dataBytes = typeof file.content === "string" ? encoder.encode(file.content) : file.content;
+        const crc = crc32(dataBytes);
+        const localHeader = zipHeader(0x04034b50, [
+          20,
+          0,
+          0,
+          0,
+          0,
+          crc,
+          dataBytes.length,
+          dataBytes.length,
+          nameBytes.length,
+          0,
+        ]);
+        localParts.push(localHeader, nameBytes, dataBytes);
+
+        const centralHeader = zipHeader(0x02014b50, [
+          20,
+          20,
+          0,
+          0,
+          0,
+          0,
+          crc,
+          dataBytes.length,
+          dataBytes.length,
+          nameBytes.length,
+          0,
+          0,
+          0,
+          0,
+          0,
+          offset,
+        ]);
+        centralParts.push(centralHeader, nameBytes);
+        offset += localHeader.length + nameBytes.length + dataBytes.length;
+      }
+
+      const centralSize = totalLength(centralParts);
+      const end = zipHeader(0x06054b50, [0, 0, files.length, files.length, centralSize, offset, 0]);
+      return concatBytes(localParts.concat(centralParts, [end]));
+    }
+
+    function zipHeader(signature, values) {
+      const sizes =
+        signature === 0x04034b50
+          ? [2, 2, 2, 2, 2, 4, 4, 4, 2, 2]
+          : signature === 0x02014b50
+            ? [2, 2, 2, 2, 2, 2, 4, 4, 4, 2, 2, 2, 2, 2, 4, 4]
+            : [2, 2, 2, 2, 4, 4, 2];
+      const bytes = new Uint8Array(4 + sizes.reduce((sum, size) => sum + size, 0));
+      const view = new DataView(bytes.buffer);
+      view.setUint32(0, signature, true);
+      let offset = 4;
+      for (let index = 0; index < values.length; index += 1) {
+        if (sizes[index] === 2) {
+          view.setUint16(offset, values[index], true);
+        } else {
+          view.setUint32(offset, values[index], true);
+        }
+        offset += sizes[index];
+      }
+      return bytes;
+    }
+
+    function concatBytes(parts) {
+      const output = new Uint8Array(totalLength(parts));
+      let offset = 0;
+      for (const part of parts) {
+        output.set(part, offset);
+        offset += part.length;
+      }
+      return output;
+    }
+
+    function totalLength(parts) {
+      return parts.reduce((sum, part) => sum + part.length, 0);
+    }
+
+    function crc32(bytes) {
+      let crc = -1;
+      for (const byte of bytes) {
+        crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 0xff];
+      }
+      return (crc ^ -1) >>> 0;
+    }
+
+    const crcTable = (() => {
+      const table = [];
+      for (let n = 0; n < 256; n += 1) {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) {
+          c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        }
+        table[n] = c >>> 0;
+      }
+      return table;
+    })();
+
+    function columnName(index) {
+      let name = "";
+      while (index > 0) {
+        const remainder = (index - 1) % 26;
+        name = String.fromCharCode(65 + remainder) + name;
+        index = Math.floor((index - 1) / 26);
+      }
+      return name;
+    }
+
+    function xmlEscape(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function exportStamp() {
+      const now = new Date();
+      return [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+        "_",
+        String(now.getHours()).padStart(2, "0"),
+        String(now.getMinutes()).padStart(2, "0"),
+      ].join("");
+    }
+
     function selectedClientLine() {
       const client = clientsByCode.get(clientSelect.value || "");
       if (!client) {
@@ -2524,6 +3091,26 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
       const haystack = normalizeForMatch([product.groupTitle, product.brand, product.name].join(" "));
       const tokens = normalizeForMatch(pattern).split(" ").filter(Boolean);
       return tokens.length > 0 && tokens.every((token) => haystack.includes(token));
+    }
+
+    function suggestedPriceForLine(pattern) {
+      const matches = cartEntries().filter((entry) => matchesLine(pattern, entry.product));
+      if (!matches.length) {
+        return null;
+      }
+
+      const prices = new Map();
+      for (const entry of matches) {
+        const price = entry.item.negotiatedPrice ?? entry.product.priceNumber;
+        if (price == null || !Number.isFinite(Number(price))) {
+          continue;
+        }
+        const key = Number(price).toFixed(2);
+        prices.set(key, (prices.get(key) || 0) + 1);
+      }
+
+      const best = [...prices.entries()].sort((a, b) => b[1] - a[1] || Number(a[0]) - Number(b[0]))[0];
+      return best ? Number(best[0]) : null;
     }
 
     function normalizeForMatch(value) {

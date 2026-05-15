@@ -38,6 +38,7 @@
   },
   "userDataDir": "dados/chrome-profile",
   "outputDir": "saida",
+  "clientBaseEncryptedFile": "config/clientes-base.enc.json",
   "sampleHtmlFiles": [
     "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS.html",
     "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS - CLIQUE VER MAIS ATE MOSTRAR TUDO.html",

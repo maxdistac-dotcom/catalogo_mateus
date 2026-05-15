@@ -79,6 +79,8 @@ Recursos:
 - regras fixas no `config\mateus.config.json` podem sobrescrever mínimos conhecidos, como `Sandália Havaianas Color`, `Sandália Color` e `Sabão em Barra Ypê 800g`;
 - alterar preço negociado por item no carrinho;
 - aplicar preço por linha de produto, por exemplo `Havaianas Brasil` com `33,50`;
+- sugerir automaticamente o preço da linha digitada quando já houver item correspondente no carrinho;
+- exportar uma planilha `.xlsx` do carrinho no modelo `sku` e `quantidade` para importação no site real;
 - gerar automaticamente o texto de solicitação:
 
 ```text
@@ -163,6 +165,12 @@ Opcionalmente salve também:
 - `MATEUS_TELEGRAM_CHAT_ID`
 
 Se a sessão expirar, rode `npm run login` novamente e atualize o secret `MATEUS_STORAGE_STATE_BASE64`.
+
+## Base de clientes
+
+O catálogo usa `config\clientes-base.enc.json`, gerado a partir da planilha `BASE Russas Mateus.xlsx`, para preencher a lista `Cliente para o modelo de alteração` mesmo quando o site não entrega todos os clientes no scrape.
+
+Essa base fica criptografada no Pages. A senha de abertura não deve ser publicada no repositório. Para trocar a senha de forma global, é preciso gerar novamente o arquivo criptografado com a nova senha e publicar o Pages outra vez.
 
 ## Telegram opcional local
 
