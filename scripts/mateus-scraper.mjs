@@ -2238,13 +2238,15 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}) {
     setActiveView(viewFromHash(), { updateHash: false, keepScroll: true });
 
     input.addEventListener("input", () => {
-      const query = input.value.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().trim();
+      const tokens = normalizeForMatch(input.value).split(" ").filter(Boolean);
       for (const card of cards) {
-        card.classList.toggle("hidden", query && !card.dataset.search.includes(query));
+        const haystack = card.dataset.search || "";
+        const matches = tokens.length === 0 || tokens.every((token) => haystack.includes(token));
+        card.classList.toggle("hidden", !matches);
       }
       for (const section of sections) {
         const visible = section.querySelector(".product-card:not(.hidden)");
-        section.classList.toggle("hidden", !visible && query.length > 0);
+        section.classList.toggle("hidden", !visible && tokens.length > 0);
       }
     });
 
