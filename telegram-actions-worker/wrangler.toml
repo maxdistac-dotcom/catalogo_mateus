@@ -1,0 +1,11 @@
+name = "mateus-telegram-actions"
+main = "worker.js"
+compatibility_date = "2026-05-16"
+workers_dev = true
+
+[vars]
+GITHUB_OWNER = "maxdistac-dotcom"
+GITHUB_REPO = "catalogo_mateus"
+GITHUB_REF = "main"
+GITHUB_WORKFLOW_FILE = "mateus-scrape.yml"
+CATALOG_URL = "https://maxdistac-dotcom.github.io/catalogo_mateus"

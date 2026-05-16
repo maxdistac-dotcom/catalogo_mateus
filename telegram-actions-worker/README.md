@@ -25,6 +25,27 @@ Crie estas variaveis/secrets no Worker:
 - `GITHUB_WORKFLOW_FILE` - `mateus-scrape.yml`
 - `CATALOG_URL` - `https://maxdistac-dotcom.github.io/catalogo_mateus`
 
+O arquivo `wrangler.toml` ja define as variaveis nao secretas. Configure como secrets no Cloudflare:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_CHAT_ID`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `GITHUB_TOKEN`
+
+## Deploy pelo Cloudflare
+
+No Cloudflare Workers, defina o diretorio raiz do projeto como:
+
+```text
+telegram-actions-worker
+```
+
+E o comando de deploy:
+
+```text
+npx wrangler deploy
+```
+
 ## Configurar o webhook do Telegram
 
 Depois de publicar o Worker, rode no PowerShell, trocando os valores:
