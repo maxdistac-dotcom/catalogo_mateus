@@ -16,11 +16,7 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
-        return json({
-          ok: true,
-          name: "Mateus Telegram Actions Worker",
-          webhook: "/telegram",
-        });
+        return json(health(env));
       }
       const isTelegramWebhook = url.pathname === "/" || url.pathname === "/telegram";
       if (request.method !== "POST" || !isTelegramWebhook) {
@@ -44,6 +40,27 @@ export default {
     }
   },
 };
+
+function health(env) {
+  const requiredBindings = [
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_CHAT_ID",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "GITHUB_TOKEN",
+    "GITHUB_OWNER",
+    "GITHUB_REPO",
+    "GITHUB_REF",
+    "GITHUB_WORKFLOW_FILE",
+  ];
+  const missing = requiredBindings.filter((name) => !String(env[name] || "").trim());
+  return {
+    ok: missing.length === 0,
+    name: "Mateus Telegram Actions Worker",
+    webhook: "/telegram",
+    missing,
+    configured: Object.fromEntries(requiredBindings.map((name) => [name, !missing.includes(name)])),
+  };
+}
 
 async function handleTelegramUpdate(update, env) {
   const message = update.message || update.edited_message;
@@ -78,13 +95,15 @@ async function handleTelegramUpdate(update, env) {
   }
 
   if (action === "status") {
-    await sendTelegramMessage(env, chatId, await workflowStatusText(env));
+    await replyWithErrors(env, chatId, () => workflowStatusText(env));
     return;
   }
 
   const mode = modeFromText(action, text);
-  await dispatchWorkflow(env, mode);
-  await sendTelegramMessage(env, chatId, dispatchText(mode));
+  await replyWithErrors(env, chatId, async () => {
+    await dispatchWorkflow(env, mode);
+    return dispatchText(mode);
+  });
 }
 
 function normalizeCommand(text) {
@@ -197,6 +216,17 @@ async function sendTelegramMessage(env, chatId, text) {
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Telegram HTTP ${response.status}: ${body}`);
+  }
+}
+
+async function replyWithErrors(env, chatId, task) {
+  try {
+    await sendTelegramMessage(env, chatId, await task());
+  } catch (error) {
+    console.error(error);
+    if (String(env.TELEGRAM_BOT_TOKEN || "").trim()) {
+      await sendTelegramMessage(env, chatId, "Falha no Worker: " + error.message);
+    }
   }
 }
 
