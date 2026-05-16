@@ -1951,14 +1951,53 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       color: inherit;
       font-size: 12px;
     }
-    .session-actions {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      justify-content: flex-end;
+    .account-menu {
+      position: relative;
+      justify-self: end;
     }
-    .session-actions button {
+    .account-menu summary,
+    .cart-actions-menu summary {
+      list-style: none;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      padding: 7px 10px;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .account-menu summary::-webkit-details-marker,
+    .cart-actions-menu summary::-webkit-details-marker {
+      display: none;
+    }
+    .account-menu[open] summary,
+    .cart-actions-menu[open] summary {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+    .account-panel,
+    .cart-actions {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 40;
+      display: grid;
+      gap: 6px;
+      min-width: 150px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: 0 12px 28px rgba(23, 32, 51, 0.14);
+    }
+    .account-panel button,
+    .cart-actions button {
+      width: 100%;
       padding: 8px 10px;
+      text-align: left;
       white-space: nowrap;
     }
     button, input, textarea {
@@ -2191,12 +2230,13 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     .cart-header h2 {
       margin: 0;
     }
+    .cart-actions-menu {
+      position: relative;
+      flex: 0 0 auto;
+      justify-self: end;
+    }
     .cart-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-      justify-content: flex-end;
+      min-width: 190px;
     }
     .client-bar {
       display: grid;
@@ -2241,6 +2281,9 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     .rule-bar button {
       border-radius: 0 8px 8px 0;
       border: 0;
+    }
+    .short-label {
+      display: none;
     }
     .cart-items {
       display: grid;
@@ -2337,7 +2380,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         grid-column: 1 / -1;
         order: 3;
       }
-      .session-actions {
+      .account-menu {
         order: 4;
       }
       .cart-tools {
@@ -2345,41 +2388,102 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
     }
     @media (max-width: 720px) {
-      .top { grid-template-columns: 1fr; }
+      .top {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
       header { padding: 8px 10px; }
       main { padding: 12px; }
       h1 { font-size: 18px; }
-      .tabs { grid-column: auto; }
-      .session-actions {
-        width: 100%;
+      .date {
+        font-size: 11px;
       }
-      .session-actions button {
-        flex: 1 1 0;
+      #search {
+        grid-column: 1 / -1;
+        order: 3;
+      }
+      .tabs {
+        grid-column: 1 / -1;
+        order: 4;
+        gap: 6px;
+        padding-bottom: 0;
+      }
+      .account-menu {
+        grid-column: 2;
+        grid-row: 1;
+        order: 2;
+      }
+      .account-menu summary {
+        padding: 8px 10px;
+      }
+      .account-panel {
+        min-width: 126px;
       }
       .tab-button { padding: 7px 10px; }
-      .cart-toolbar { padding: 10px; }
+      .cart-toolbar { padding: 8px 10px; }
       .cart-header {
-        align-items: flex-start;
-        flex-direction: column;
+        align-items: center;
+        flex-direction: row;
+        margin-bottom: 6px;
       }
-      .cart-actions {
-        width: 100%;
-        justify-content: stretch;
+      .cart-header h2 {
+        font-size: 17px;
       }
-      .cart-actions button {
-        flex: 1 1 0;
+      .cart-actions-menu summary {
+        padding: 8px 10px;
+      }
+      .cart-tools {
+        gap: 6px;
+      }
+      .client-bar {
+        gap: 3px;
+      }
+      .client-bar label {
+        display: none;
+      }
+      .client-hint {
+        min-height: 0;
+      }
+      .client-hint:empty {
+        display: none;
       }
       .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
       .rule-bar {
-        grid-template-columns: minmax(0, 1fr) minmax(82px, 96px) auto;
+        grid-template-columns: minmax(0, 1fr) minmax(76px, 92px) 58px;
       }
       .rule-bar input,
       .rule-bar button {
         padding: 8px 7px;
         font-size: 14px;
       }
+      .long-label {
+        display: none;
+      }
+      .short-label {
+        display: inline;
+      }
       .cart-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) 76px 88px 42px;
+        gap: 6px;
+        padding: 8px;
+      }
+      .cart-name {
+        grid-column: 1 / -1;
+      }
+      .cart-row input {
+        padding: 8px;
+      }
+      .cart-row button[data-remove-key] {
+        width: 42px;
+        min-height: 38px;
+        padding: 0;
+        overflow: hidden;
+        font-size: 0;
+      }
+      .cart-row button[data-remove-key]::before {
+        content: "X";
+        font-size: 16px;
+        line-height: 1;
       }
       .image { height: 120px; }
       .image img { max-height: 116px; }
@@ -2413,19 +2517,28 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
     @media (max-width: 430px) {
       .rule-bar {
-        grid-template-columns: minmax(0, 1fr) minmax(78px, 96px);
+        grid-template-columns: minmax(0, 1fr) 74px 52px;
       }
       .rule-bar input,
       .rule-bar input:first-child {
-        border-radius: 8px;
-        border: 1px solid var(--line);
+        border-radius: 0;
+        border: 0;
+        border-right: 1px solid var(--line);
+      }
+      .rule-bar input:first-child {
+        border-radius: 8px 0 0 8px;
       }
       .rule-bar button {
-        border-radius: 8px;
-        grid-column: 1 / -1;
-      }
-      .rule-bar button {
+        border-radius: 0 8px 8px 0;
         border-color: var(--blue);
+        grid-column: auto;
+      }
+      .cart-row {
+        grid-template-columns: minmax(0, 1fr) 70px 82px 40px;
+      }
+      .cart-total {
+        justify-content: space-between;
+        gap: 8px;
       }
     }
   </style>
@@ -2459,10 +2572,13 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         <button type="button" class="tab-button" data-view-target="summary">Resumo</button>
       </nav>
       <input id="search" type="search" autocomplete="off" placeholder="Buscar produto, SKU, marca ou tamanho">
-      <div class="session-actions">
-        <button id="changePassword" type="button" class="secondary">Senha</button>
-        <button id="logout" type="button" class="secondary">Sair</button>
-      </div>
+      <details class="account-menu">
+        <summary>Conta</summary>
+        <div class="account-panel">
+          <button id="changePassword" type="button" class="secondary">Senha</button>
+          <button id="logout" type="button" class="secondary">Sair</button>
+        </div>
+      </details>
     </div>
   </header>
   <main>
@@ -2482,12 +2598,15 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       <div class="cart-toolbar">
       <div class="cart-header">
         <h2>Carrinho fictício (<span id="cartCount">0</span>)</h2>
-        <div class="cart-actions">
-          <button id="exportImportCart" type="button" class="secondary">Exportar planilha</button>
-          <button id="importCartPdf" type="button" class="secondary">Importar PDF</button>
-          <input id="importCartPdfFile" type="file" accept="application/pdf,.pdf" class="hidden">
-          <button id="clearCart" type="button" class="danger">Limpar</button>
-        </div>
+        <details class="cart-actions-menu">
+          <summary>Acoes</summary>
+          <div class="cart-actions">
+            <button id="exportImportCart" type="button" class="secondary">Exportar planilha</button>
+            <button id="importCartPdf" type="button" class="secondary">Importar PDF</button>
+            <input id="importCartPdfFile" type="file" accept="application/pdf,.pdf" class="hidden">
+            <button id="clearCart" type="button" class="danger">Limpar</button>
+          </div>
+        </details>
       </div>
       <div class="cart-tools">
       <div class="client-bar">
@@ -2499,7 +2618,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       <div class="rule-bar">
         <input id="linePattern" type="text" autocomplete="off" placeholder="Linha/modelo: Slim Square">
         <input id="linePrice" type="text" inputmode="decimal" autocomplete="off" placeholder="Preço">
-        <button id="applyLinePrice" type="button">Aplicar</button>
+        <button id="applyLinePrice" type="button"><span class="long-label">Aplicar</span><span class="short-label">OK</span></button>
       </div>
       </div>
       </div>
