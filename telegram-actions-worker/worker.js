@@ -15,10 +15,15 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
-      if (request.method === "GET" && url.pathname === "/health") {
-        return json({ ok: true });
+      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
+        return json({
+          ok: true,
+          name: "Mateus Telegram Actions Worker",
+          webhook: "/telegram",
+        });
       }
-      if (request.method !== "POST" || url.pathname !== "/telegram") {
+      const isTelegramWebhook = url.pathname === "/" || url.pathname === "/telegram";
+      if (request.method !== "POST" || !isTelegramWebhook) {
         return new Response("Not found", { status: 404 });
       }
 

@@ -65,3 +65,5 @@ Para conferir:
 ```powershell
 Invoke-RestMethod "https://api.telegram.org/bot$TOKEN/getWebhookInfo"
 ```
+
+Se voce usar a URL sem `/telegram`, o Worker tambem aceita, mas `/telegram` deixa mais claro que aquela rota e o webhook do bot.
