@@ -1777,7 +1777,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     ...product,
     cartKey: product.sku || `item-${index + 1}`,
   }));
-  const clients = normalizeClients(meta.clients || []);
+  const clients = normalizeClients([...(meta.clients || []), ...(config.manualClients || [])]);
   const hasAuthGate = Boolean(encryptedClientBase);
   const groups = config.products.map((group) => ({
     ...group,

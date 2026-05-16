@@ -40,6 +40,16 @@
   "outputDir": "saida",
   "publishedCatalogUrl": "https://maxdistac-dotcom.github.io/catalogo_mateus",
   "clientBaseEncryptedFile": "config/clientes-base.enc.json",
+  "manualClients": [
+    {
+      "code": "4339261",
+      "name": "M ERINEIDE V DO N ME"
+    },
+    {
+      "code": "3759102",
+      "name": "ANA KATIA MERCADINHO KANTO DO FRANGO"
+    }
+  ],
   "supabase": {
     "url": "https://pkpoalacjvdtezngrjbq.supabase.co",
     "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBrcG9hbGFjanZkdGV6bmdyamJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4ODY5MjYsImV4cCI6MjA5NDQ2MjkyNn0.xnhkRRqkAL0VXrLkR0OqQ4-ArfZ2hGDhrF2tobrpojI"
