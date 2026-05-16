@@ -38,6 +38,7 @@
   },
   "userDataDir": "dados/chrome-profile",
   "outputDir": "saida",
+  "publishedCatalogUrl": "https://maxdistac-dotcom.github.io/catalogo_mateus",
   "clientBaseEncryptedFile": "config/clientes-base.enc.json",
   "supabase": {
     "url": "https://pkpoalacjvdtezngrjbq.supabase.co",

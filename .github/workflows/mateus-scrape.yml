@@ -12,6 +12,7 @@ on:
           - auto
           - no-images
           - images
+          - deploy-only
   schedule:
     # 07:00 em America/Fortaleza (UTC-3). Segunda: completo com imagens.
     - cron: "0 10 * * 1"
@@ -60,9 +61,14 @@ jobs:
             fi
           fi
 
-          if [ "$MODE" = "images" ]; then
+          if [ "$MODE" = "deploy-only" ]; then
+            echo "SCRAPE_COMMAND=deploy-only" >> "$GITHUB_ENV"
+            echo "SCRAPE_ARGS=--no-images" >> "$GITHUB_ENV"
+          elif [ "$MODE" = "images" ]; then
+            echo "SCRAPE_COMMAND=scrape" >> "$GITHUB_ENV"
             echo "SCRAPE_ARGS=" >> "$GITHUB_ENV"
           else
+            echo "SCRAPE_COMMAND=scrape" >> "$GITHUB_ENV"
             echo "SCRAPE_ARGS=--no-images" >> "$GITHUB_ENV"
           fi
 
@@ -71,16 +77,23 @@ jobs:
 
       - name: Check required secrets
         run: |
-          test -n "$MATEUS_STORAGE_STATE_BASE64" || (echo "::error::Missing secret MATEUS_STORAGE_STATE_BASE64. Generate it locally from dados/storage-state.base64.txt and add it in Settings > Secrets and variables > Actions." && exit 1)
-          test -n "$MATEUS_CLIENT_CODE" || (echo "::warning::Missing MATEUS_CLIENT_CODE. The scraper will use only the saved session client, if present.")
+          if [ "$SCRAPE_MODE" != "deploy-only" ]; then
+            test -n "$MATEUS_STORAGE_STATE_BASE64" || (echo "::error::Missing secret MATEUS_STORAGE_STATE_BASE64. Generate it locally from dados/storage-state.base64.txt and add it in Settings > Secrets and variables > Actions." && exit 1)
+            test -n "$MATEUS_CLIENT_CODE" || (echo "::warning::Missing MATEUS_CLIENT_CODE. The scraper will use only the saved session client, if present.")
+          else
+            echo "deploy-only: pulando secrets do Mateus Mais."
+          fi
 
-      - name: Install Playwright
+      - name: Install dependencies
         run: |
-          npm install --no-save playwright@latest pdfjs-dist@latest
-          npx playwright install --with-deps chromium
+          npm install --no-save pdfjs-dist@latest
+          if [ "$SCRAPE_MODE" != "deploy-only" ]; then
+            npm install --no-save playwright@latest
+            npx playwright install --with-deps chromium
+          fi
 
-      - name: Scrape Mateus Mais
-        run: node scripts/mateus-scraper.mjs scrape $SCRAPE_ARGS
+      - name: Build catalog
+        run: node scripts/mateus-scraper.mjs $SCRAPE_COMMAND $SCRAPE_ARGS
 
       - name: Upload catalog artifact
         uses: actions/upload-artifact@v4

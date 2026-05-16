@@ -35,6 +35,13 @@ async function main() {
     return;
   }
 
+  if (command === "deploy-only") {
+    config.downloadImages = false;
+    const result = await collectFromPublishedCatalog(config);
+    await writeOutputs(config, result.products, result.meta);
+    return;
+  }
+
   if (command === "scrape") {
     const clientCode = cliArgs.client || cliArgs.cliente;
     if (clientCode) {
@@ -1147,6 +1154,51 @@ async function collectFromSampleHtml(config) {
   };
 }
 
+async function collectFromPublishedCatalog(config) {
+  const catalogUrl = String(
+    process.env.MATEUS_PUBLISHED_CATALOG_URL || config.publishedCatalogUrl || "https://maxdistac-dotcom.github.io/catalogo_mateus",
+  ).replace(/\/+$/, "");
+  const produtosUrl = `${catalogUrl}/produtos.json?ts=${Date.now()}`;
+  let payload = null;
+
+  try {
+    console.log(`Baixando catálogo publicado: ${produtosUrl}`);
+    const response = await fetch(produtosUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    payload = await response.json();
+  } catch (error) {
+    const fallback = path.join(absoluteFromProject(config.outputDir), "produtos.json");
+    console.log(`Aviso: não consegui baixar o catálogo publicado (${error.message}). Tentando ${fallback}.`);
+    payload = await readJson(fallback);
+  }
+
+  const products = Array.isArray(payload.products) ? payload.products : [];
+  if (!products.length) {
+    throw new Error("O catálogo publicado não tem produtos para reaproveitar.");
+  }
+
+  return {
+    products: products.map((product) => ({
+      ...product,
+      localImage: product.localImage || (product.image ? `imagens/${imageFilename(product)}` : ""),
+    })),
+    meta: {
+      ...(payload.meta || {}),
+      mode: "deploy-only",
+      sourceGeneratedAt: payload.generatedAt || payload.meta?.generatedAt || null,
+      skipTelegram: true,
+      pages: [
+        {
+          title: "Catálogo publicado reaproveitado",
+          count: products.length,
+        },
+      ],
+    },
+  };
+}
+
 function extractProductsFromHtml(html, sourceFile = "") {
   const chunks = html.match(/<app-product-card\b[\s\S]*?<\/app-product-card>/g) || [];
   return chunks
@@ -1491,7 +1543,9 @@ async function writeOutputs(config, products, meta) {
   await fs.writeFile(runFiles.icon, iconSvg, "utf8");
 
   await publishLatest(outputRoot, runDir, runFiles);
-  await maybeSendTelegram(config, summary, [runFiles.html, runFiles.csv]);
+  if (!normalizedMeta.skipTelegram) {
+    await maybeSendTelegram(config, summary, [runFiles.html, runFiles.csv]);
+  }
 
   console.log("");
   console.log(`Produtos disponíveis: ${products.length}`);

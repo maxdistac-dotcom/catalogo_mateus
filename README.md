@@ -122,7 +122,11 @@ Agenda configurada no GitHub Actions:
 - terça a sábado às 07:00: coleta leve sem baixar imagens;
 - domingo: sem coleta.
 
-No disparo manual (`Run workflow`), use `images` para forçar uma coleta completa ou `no-images` para uma coleta rápida.
+No disparo manual (`Run workflow`), use:
+
+- `images`: força uma coleta completa;
+- `no-images`: faz uma coleta rápida sem baixar imagens;
+- `deploy-only`: não acessa o Mateus Mais; reaproveita o último `produtos.json` publicado e recompila o Pages apenas com as funcionalidades novas do commit.
 
 ## PWA e uso offline no celular
 
