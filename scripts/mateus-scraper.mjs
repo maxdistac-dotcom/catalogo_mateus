@@ -2735,22 +2735,38 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         error.textContent = "";
         const emailValue = emailInput.value.trim();
         const email = normalizeForMatch(emailValue);
+        let decrypted = null;
         try {
           if (supabaseEnabled) {
-            supabaseSession = await signInSupabase(emailValue, passwordInput.value);
+            try {
+              supabaseSession = await signInSupabase(emailValue, passwordInput.value);
+            } catch (authError) {
+              console.error(authError);
+              error.textContent = "Supabase recusou o login. Confira se o usuario existe, se o email foi confirmado e se a senha esta correta.";
+              return;
+            }
           } else if (!loginBase || email !== normalizeForMatch(loginBase.email || authEmail)) {
             error.textContent = "Email ou senha incorretos.";
             return;
           }
-          const decrypted = await decryptClientBase(loginBase, passwordInput.value);
+          try {
+            decrypted = await decryptClientBase(loginBase, passwordInput.value);
+          } catch (decryptError) {
+            console.error(decryptError);
+            error.textContent = supabaseEnabled
+              ? "Login aceito no Supabase, mas essa senha nao abriu a base de clientes salva no catalogo."
+              : "Email ou senha incorretos.";
+            return;
+          }
           unlockCatalog(decrypted.clients || decrypted, {
             saveSession: true,
             email: emailValue || loginBase.email || authEmail,
             syncCloud: supabaseEnabled,
           });
           passwordInput.value = "";
-        } catch {
-          error.textContent = "Email ou senha incorretos.";
+        } catch (unexpectedError) {
+          console.error(unexpectedError);
+          error.textContent = "Nao consegui abrir o catalogo. Tente novamente.";
         }
       });
     }
@@ -2863,6 +2879,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     async function supabaseRequest(url, options = {}) {
       const headers = {
         apikey: supabaseConfig.anonKey,
+        Authorization: "Bearer " + (options.auth && supabaseSession?.access_token ? supabaseSession.access_token : supabaseConfig.anonKey),
         "Content-Type": "application/json",
         ...(options.headers || {}),
       };
@@ -2880,7 +2897,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
       if (!response.ok) {
         const text = await response.text().catch(() => "");
-        throw new Error(text || "Supabase HTTP " + response.status);
+        let message = text;
+        try {
+          const parsed = JSON.parse(text);
+          message = parsed.msg || parsed.message || parsed.error_description || parsed.error || text;
+        } catch {}
+        throw new Error(message || "Supabase HTTP " + response.status);
       }
       if (response.status === 204) {
         return null;
