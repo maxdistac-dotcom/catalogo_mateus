@@ -1711,6 +1711,13 @@ function csvCell(value) {
   return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+function normalizeSupabaseConfig(supabase = {}) {
+  const rawUrl = String(supabase.url || "").trim();
+  const url = rawUrl.replace(/\/rest\/v1\/?$/i, "").replace(/\/+$/, "");
+  const anonKey = String(supabase.anonKey || supabase.anon_key || "").trim();
+  return { url, anonKey };
+}
+
 function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, encryptedClientBase = null) {
   const catalogProducts = products.map((product, index) => ({
     ...product,
@@ -1728,6 +1735,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     client: "Cliente: *9999999* - NOME FANTASIA OU RAZÃO",
     supervisor: "Supervisor: Natan",
   };
+  const supabaseConfig = normalizeSupabaseConfig(config.supabase);
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -2457,6 +2465,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
   <script type="application/json" id="clients-data">${safeJsonForScript(clients)}</script>
   <script type="application/json" id="encrypted-clients-data">${safeJsonForScript(encryptedClientBase)}</script>
   <script type="application/json" id="price-template">${safeJsonForScript(priceRequestTemplate)}</script>
+  <script type="application/json" id="supabase-config">${safeJsonForScript(supabaseConfig)}</script>
   <script>
     const input = document.getElementById("search");
     const cards = Array.from(document.querySelectorAll(".product-card"));
@@ -2468,9 +2477,18 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     let clientsByCode = new Map(clients.map((client) => [client.code, client]));
     const encryptedClientBase = JSON.parse(document.getElementById("encrypted-clients-data").textContent);
     const priceTemplate = JSON.parse(document.getElementById("price-template").textContent);
+    const supabaseConfig = JSON.parse(document.getElementById("supabase-config").textContent);
+    const supabaseEnabled = Boolean(supabaseConfig.url && supabaseConfig.anonKey);
+    const supabaseUrl = String(supabaseConfig.url || "")
+      .replace(new RegExp("/rest/v1/?$", "i"), "")
+      .replace(new RegExp("/+$"), "");
+    const supabaseAuthUrl = supabaseUrl ? supabaseUrl + "/auth/v1" : "";
+    const supabaseRestUrl = supabaseUrl ? supabaseUrl + "/rest/v1" : "";
     const cartKey = "mateus-fictitious-cart-v2";
+    const cartMetaKey = "mateus-fictitious-cart-meta-v1";
     const clientKey = "mateus-selected-client-v1";
     const authSessionKey = "mateus-auth-session-v1";
+    const supabaseSessionKey = "mateus-supabase-session-v1";
     const localClientBaseKey = "mateus-local-client-base-v1";
     const authEmail = (encryptedClientBase && encryptedClientBase.email) || "max.distac@gmail.com";
     const cartItems = document.getElementById("cartItems");
@@ -2492,12 +2510,18 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     let cart = readCart();
     let selectedClientCode = localStorage.getItem(clientKey) || "";
     let pdfJsLibPromise = null;
+    let supabaseSession = null;
+    let cloudSaveTimer = null;
+    let cloudSyncInFlight = false;
+    let cloudSyncQueued = false;
+    let cloudErrorShown = false;
 
     document.querySelectorAll("[data-view-target]").forEach((button) => {
       button.addEventListener("click", () => setActiveView(button.dataset.viewTarget));
     });
     window.addEventListener("hashchange", () => setActiveView(viewFromHash(), { updateHash: false }));
     window.addEventListener("resize", updateStickyOffsets);
+    window.addEventListener("online", () => scheduleCloudCartSync({ immediate: true }));
     updateStickyOffsets();
     initializeCatalog();
 
@@ -2601,7 +2625,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       logoutButton.addEventListener("click", logoutCatalog);
     }
     if (changePasswordButton) {
-      changePasswordButton.addEventListener("click", changeLocalPassword);
+      changePasswordButton.addEventListener("click", changeCatalogPassword);
     }
 
     document.getElementById("copyRequest").addEventListener("click", async () => {
@@ -2613,10 +2637,26 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
     });
 
-    function initializeCatalog() {
-      const savedSession = readAuthSession();
-      if (savedSession) {
-        unlockCatalog(savedSession.clients, { saveSession: false });
+    async function initializeCatalog() {
+      if (supabaseEnabled) {
+        supabaseSession = await restoreSupabaseSession();
+        if (supabaseSession) {
+          const savedClientSession = readAuthSession();
+          if (savedClientSession) {
+            unlockCatalog(savedClientSession.clients, { saveSession: false, syncCloud: true });
+            return;
+          }
+          setupAuthGate();
+          showPwaStatus("Sessao Supabase ativa. Entre uma vez para desbloquear a base de clientes neste aparelho.");
+          return;
+        }
+        setupAuthGate();
+        return;
+      }
+
+      const savedClientSession = readAuthSession();
+      if (savedClientSession) {
+        unlockCatalog(savedClientSession.clients, { saveSession: false });
         return;
       }
       if (encryptedClientBase || readLocalClientBase()) {
@@ -2639,14 +2679,21 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         error.textContent = "";
-        const email = normalizeForMatch(emailInput.value);
-        if (!loginBase || email !== normalizeForMatch(loginBase.email || authEmail)) {
-          error.textContent = "Email ou senha incorretos.";
-          return;
-        }
+        const emailValue = emailInput.value.trim();
+        const email = normalizeForMatch(emailValue);
         try {
+          if (supabaseEnabled) {
+            supabaseSession = await signInSupabase(emailValue, passwordInput.value);
+          } else if (!loginBase || email !== normalizeForMatch(loginBase.email || authEmail)) {
+            error.textContent = "Email ou senha incorretos.";
+            return;
+          }
           const decrypted = await decryptClientBase(loginBase, passwordInput.value);
-          unlockCatalog(decrypted.clients || decrypted, { saveSession: true, email: loginBase.email || authEmail });
+          unlockCatalog(decrypted.clients || decrypted, {
+            saveSession: true,
+            email: emailValue || loginBase.email || authEmail,
+            syncCloud: supabaseEnabled,
+          });
           passwordInput.value = "";
         } catch {
           error.textContent = "Email ou senha incorretos.";
@@ -2664,7 +2711,128 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       if (options.saveSession) {
         saveAuthSession(options.email || authEmail);
       }
+      if (options.syncCloud && supabaseEnabled && supabaseSession) {
+        initializeCloudCart();
+      }
       registerOfflineCache();
+    }
+
+    async function restoreSupabaseSession() {
+      const saved = readSupabaseSession();
+      if (!saved) {
+        return null;
+      }
+      if (saved.expires_at && saved.expires_at * 1000 > Date.now() + 60000) {
+        return saved;
+      }
+      if (!saved.refresh_token) {
+        localStorage.removeItem(supabaseSessionKey);
+        return null;
+      }
+      try {
+        return await refreshSupabaseSession(saved.refresh_token);
+      } catch {
+        if (navigator.onLine === false) {
+          return saved;
+        }
+        localStorage.removeItem(supabaseSessionKey);
+        return null;
+      }
+    }
+
+    function readSupabaseSession() {
+      try {
+        const session = JSON.parse(localStorage.getItem(supabaseSessionKey) || "null");
+        return session && session.access_token && session.user ? session : null;
+      } catch {
+        localStorage.removeItem(supabaseSessionKey);
+        return null;
+      }
+    }
+
+    function saveSupabaseSession(session) {
+      if (!session || !session.access_token) {
+        return null;
+      }
+      const normalized = {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token || supabaseSession?.refresh_token || "",
+        expires_at: session.expires_at || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600),
+        user: session.user || supabaseSession?.user,
+      };
+      localStorage.setItem(supabaseSessionKey, JSON.stringify(normalized));
+      return normalized;
+    }
+
+    async function signInSupabase(email, password) {
+      const response = await supabaseAuthRequest("/token?grant_type=password", {
+        method: "POST",
+        body: { email, password },
+      });
+      return saveSupabaseSession(response);
+    }
+
+    async function refreshSupabaseSession(refreshToken) {
+      const response = await supabaseAuthRequest("/token?grant_type=refresh_token", {
+        method: "POST",
+        body: { refresh_token: refreshToken },
+      });
+      return saveSupabaseSession(response);
+    }
+
+    async function signOutSupabase() {
+      if (!supabaseSession?.access_token) {
+        return;
+      }
+      await supabaseAuthRequest("/logout", {
+        method: "POST",
+        auth: true,
+      });
+    }
+
+    async function updateSupabasePassword(password) {
+      await supabaseAuthRequest("/user", {
+        method: "PUT",
+        auth: true,
+        body: { password },
+      });
+    }
+
+    async function supabaseAuthRequest(path, options = {}) {
+      return supabaseRequest(supabaseAuthUrl + path, options);
+    }
+
+    async function supabaseRestRequest(path, options = {}) {
+      return supabaseRequest(supabaseRestUrl + path, { ...options, auth: true });
+    }
+
+    async function supabaseRequest(url, options = {}) {
+      const headers = {
+        apikey: supabaseConfig.anonKey,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
+      if (options.auth && supabaseSession?.access_token) {
+        headers.Authorization = "Bearer " + supabaseSession.access_token;
+      }
+      const response = await fetch(url, {
+        method: options.method || "GET",
+        headers,
+        body: options.body == null ? undefined : JSON.stringify(options.body),
+      });
+      if (response.status === 401 && options.auth && supabaseSession?.refresh_token && !options.retry) {
+        supabaseSession = await refreshSupabaseSession(supabaseSession.refresh_token);
+        return supabaseRequest(url, { ...options, retry: true });
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(text || "Supabase HTTP " + response.status);
+      }
+      if (response.status === 204) {
+        return null;
+      }
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
     }
 
     function readAuthSession() {
@@ -2704,9 +2872,53 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
 
     function logoutCatalog() {
+      if (supabaseEnabled) {
+        signOutSupabase().catch(() => {});
+      }
+      supabaseSession = null;
+      localStorage.removeItem(supabaseSessionKey);
       localStorage.removeItem(authSessionKey);
       document.body.dataset.auth = encryptedClientBase || readLocalClientBase() ? "locked" : "open";
       window.location.reload();
+    }
+
+    async function changeCatalogPassword() {
+      if (supabaseEnabled) {
+        await changeSupabasePassword();
+        return;
+      }
+      await changeLocalPassword();
+    }
+
+    async function changeSupabasePassword() {
+      if (!supabaseSession) {
+        showPwaStatus("Entre novamente para trocar a senha.");
+        return;
+      }
+      const first = window.prompt("Digite a nova senha:");
+      if (!first) {
+        return;
+      }
+      if (first.length < 6) {
+        showPwaStatus("Use uma senha com pelo menos 6 caracteres.");
+        return;
+      }
+      const second = window.prompt("Repita a nova senha:");
+      if (first !== second) {
+        showPwaStatus("As senhas nao conferem.");
+        return;
+      }
+      try {
+        await updateSupabasePassword(first);
+        if (clients.length) {
+          const sealed = await encryptClientBase({ clients }, first, authEmail);
+          localStorage.setItem(localClientBaseKey, JSON.stringify(sealed));
+          saveAuthSession(authEmail);
+        }
+        showPwaStatus("Senha alterada no Supabase e neste aparelho.");
+      } catch {
+        showPwaStatus("Nao consegui trocar a senha no Supabase.");
+      }
     }
 
     async function changeLocalPassword() {
@@ -2887,6 +3099,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         localStorage.setItem(clientKey, "");
         setClientHint("");
         renderCart();
+        scheduleCloudCartSync();
         return;
       }
       if (directCode && clientsByCode.has(directCode)) {
@@ -2894,6 +3107,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         localStorage.setItem(clientKey, selectedClientCode);
         setClientHint("Cliente selecionado.");
         renderCart();
+        scheduleCloudCartSync();
         return;
       }
 
@@ -2909,6 +3123,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         setClientHint(matches.length ? matches.length + " cliente(s) encontrado(s). Escolha um da lista." : "Nenhum cliente encontrado.");
       }
       renderCart();
+      scheduleCloudCartSync();
     }
 
     function syncClientSearchInput() {
@@ -2972,9 +3187,126 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
     }
 
-    function saveCart() {
+    function saveCart(options = {}) {
+      if (!options.keepTimestamp) {
+        localStorage.setItem(cartMetaKey, JSON.stringify({ updatedAt: new Date().toISOString() }));
+      }
       localStorage.setItem(cartKey, JSON.stringify(cart));
       renderCart();
+      if (!options.skipCloud) {
+        scheduleCloudCartSync();
+      }
+    }
+
+    function readCartMeta() {
+      try {
+        return JSON.parse(localStorage.getItem(cartMetaKey) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    async function initializeCloudCart() {
+      if (!supabaseEnabled || !supabaseSession?.user?.id) {
+        return;
+      }
+      if (navigator.onLine === false) {
+        showPwaStatus("Sem internet. Carrinho local sera sincronizado quando voltar.");
+        return;
+      }
+      try {
+        const rows = await supabaseRestRequest(
+          "/cart_states?user_id=eq." + encodeURIComponent(supabaseSession.user.id) + "&select=cart,selected_client_code,updated_at",
+        );
+        if (Array.isArray(rows) && rows[0]) {
+          mergeCloudCart(rows[0]);
+        } else {
+          scheduleCloudCartSync({ immediate: true });
+        }
+      } catch (error) {
+        console.error(error);
+        showCloudError();
+      }
+    }
+
+    function mergeCloudCart(row) {
+      const remoteCart = row && row.cart && typeof row.cart === "object" ? row.cart : {};
+      const localMeta = readCartMeta();
+      const remoteTime = Date.parse(row.updated_at || "") || 0;
+      const localTime = Date.parse(localMeta.updatedAt || "") || 0;
+      const remoteWins = remoteTime > localTime;
+      cart = remoteWins ? { ...cart, ...remoteCart } : { ...remoteCart, ...cart };
+      if (row.selected_client_code && (remoteWins || !selectedClientCode)) {
+        selectedClientCode = String(row.selected_client_code);
+        localStorage.setItem(clientKey, selectedClientCode);
+        syncClientSearchInput();
+      }
+      localStorage.setItem(
+        cartMetaKey,
+        JSON.stringify({ updatedAt: new Date(Math.max(remoteTime, localTime, Date.now())).toISOString() }),
+      );
+      saveCart({ skipCloud: true, keepTimestamp: true });
+      scheduleCloudCartSync({ immediate: true });
+    }
+
+    function scheduleCloudCartSync(options = {}) {
+      if (!supabaseEnabled || !supabaseSession?.user?.id) {
+        return;
+      }
+      if (cloudSaveTimer) {
+        window.clearTimeout(cloudSaveTimer);
+      }
+      if (options.immediate) {
+        syncCloudCart();
+        return;
+      }
+      cloudSaveTimer = window.setTimeout(syncCloudCart, 900);
+    }
+
+    async function syncCloudCart() {
+      if (!supabaseEnabled || !supabaseSession?.user?.id) {
+        return;
+      }
+      if (navigator.onLine === false) {
+        showPwaStatus("Sem internet. Carrinho salvo localmente.");
+        return;
+      }
+      if (cloudSyncInFlight) {
+        cloudSyncQueued = true;
+        return;
+      }
+      cloudSyncInFlight = true;
+      try {
+        await supabaseRestRequest("/cart_states?on_conflict=user_id", {
+          method: "POST",
+          headers: {
+            Prefer: "resolution=merge-duplicates",
+          },
+          body: {
+            user_id: supabaseSession.user.id,
+            cart,
+            selected_client_code: selectedClientCode || null,
+            updated_at: new Date().toISOString(),
+          },
+        });
+        cloudErrorShown = false;
+      } catch (error) {
+        console.error(error);
+        showCloudError();
+      } finally {
+        cloudSyncInFlight = false;
+        if (cloudSyncQueued) {
+          cloudSyncQueued = false;
+          scheduleCloudCartSync({ immediate: true });
+        }
+      }
+    }
+
+    function showCloudError() {
+      if (!cloudErrorShown) {
+        showPwaStatus("Nao consegui sincronizar com Supabase. Verifique a tabela cart_states e a internet.");
+      }
+      cloudErrorShown = true;
     }
 
     function cartEntries() {

@@ -167,11 +167,28 @@ Opcionalmente salve também:
 
 Se a sessão expirar, rode `npm run login` novamente e atualize o secret `MATEUS_STORAGE_STATE_BASE64`.
 
+## Supabase
+
+O catálogo usa Supabase Auth para login/senha e a tabela `cart_states` para manter o carrinho sincronizado entre aparelhos.
+
+1. No Supabase, abra `SQL Editor`.
+2. Rode o conteúdo de `supabase\setup.sql`.
+3. Em `Authentication > Users`, crie o usuário que vai acessar o catálogo.
+4. Em `Authentication > URL Configuration`, configure o site:
+
+```text
+https://maxdistac-dotcom.github.io/catalogo_mateus/
+```
+
+A URL e a `anon public key` ficam em `config\mateus.config.json`. Essa chave é pública por natureza; nunca coloque a `service_role key` no projeto.
+
+Quando houver internet, o carrinho é salvo no Supabase por `upsert`. Sem internet, o carrinho continua salvo localmente e tenta sincronizar quando a conexão volta.
+
 ## Base de clientes
 
 O catálogo usa `config\clientes-base.enc.json`, gerado a partir da planilha `BASE Russas Mateus.xlsx`, para preencher a lista `Cliente para o modelo de alteração` mesmo quando o site não entrega todos os clientes no scrape.
 
-Essa base fica criptografada no Pages. A senha de abertura não deve ser publicada no repositório. O botão `Senha` troca a senha apenas no navegador/aparelho em uso e salva uma nova cópia local criptografada da base; o botão `Sair` apaga a sessão salva desse aparelho. Para trocar a senha de forma global, é preciso gerar novamente o arquivo criptografado com a nova senha e publicar o Pages outra vez.
+Essa base fica criptografada no Pages. Com Supabase ligado, o botão `Senha` troca a senha global do login e também salva uma nova cópia local criptografada da base neste aparelho. O carrinho fica global no Supabase; a base de clientes ainda depende do arquivo criptografado publicado no Pages.
 
 ## Telegram opcional local
 

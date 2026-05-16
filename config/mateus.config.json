@@ -39,6 +39,10 @@
   "userDataDir": "dados/chrome-profile",
   "outputDir": "saida",
   "clientBaseEncryptedFile": "config/clientes-base.enc.json",
+  "supabase": {
+    "url": "https://pkpoalacjvdtezngrjbq.supabase.co",
+    "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBrcG9hbGFjanZkdGV6bmdyamJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4ODY5MjYsImV4cCI6MjA5NDQ2MjkyNn0.xnhkRRqkAL0VXrLkR0OqQ4-ArfZ2hGDhrF2tobrpojI"
+  },
   "sampleHtmlFiles": [
     "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS.html",
     "C:/Users/Max/PCODE Scraping Mateus/Centro de Distribuição - 342 _ Venda Externa _ Mateus Mais FILTRO DE MARCAS - HAVAIANAS - CLIQUE VER MAIS ATE MOSTRAR TUDO.html",
