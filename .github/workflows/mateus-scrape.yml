@@ -86,7 +86,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --no-save pdfjs-dist@latest
+          npm install
+          node -e "const fs=require('fs'); for (const dir of ['node_modules/pdfjs-dist/legacy/build','node_modules/pdfjs-dist/build']) { if (fs.existsSync(dir)) console.log(dir, fs.readdirSync(dir).filter((name)=>/^pdf(\\.worker)?(\\.min)?\\.mjs$/.test(name)).join(', ')); }"
           if [ "$SCRAPE_MODE" != "deploy-only" ]; then
             npm install --no-save playwright@latest
             npx playwright install --with-deps chromium

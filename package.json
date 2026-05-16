@@ -10,5 +10,8 @@
     "scrape:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 scrape --no-images --no-probe",
     "deploy-only": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 deploy-only --no-images",
     "test:samples": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_node.ps1 parse-samples"
+  },
+  "dependencies": {
+    "pdfjs-dist": "latest"
   }
 }
