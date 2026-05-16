@@ -2636,6 +2636,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       saveCart();
     });
 
+    window.addEventListener("online", () => {
+      if (supabaseEnabled && supabaseSession?.user?.id) {
+        initializeCloudCart();
+      }
+    });
+
     document.getElementById("exportImportCart").addEventListener("click", exportImportCart);
     if (importCartPdfButton && importCartPdfFile) {
       importCartPdfButton.addEventListener("click", () => importCartPdfFile.click());
@@ -2806,10 +2812,10 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         saveAuthSession(options.email || authEmail);
       }
       if (options.syncCloud && supabaseEnabled && supabaseSession) {
+        const cartSync = initializeCloudCart();
         if (!options.skipClientBaseUpload) {
-          syncCloudClientBase();
+          cartSync.finally(() => syncCloudClientBase());
         }
-        initializeCloudCart();
       }
       registerOfflineCache();
     }
@@ -3354,7 +3360,6 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
               clients,
               updated_at: new Date().toISOString(),
             },
-            updated_at: new Date().toISOString(),
           },
         });
       } catch (error) {
@@ -3378,7 +3383,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         if (Array.isArray(rows) && rows[0]) {
           mergeCloudCart(rows[0]);
         } else {
-          scheduleCloudCartSync({ immediate: true });
+          await scheduleCloudCartSync({ immediate: true });
         }
       } catch (error) {
         console.error(error);
@@ -3388,11 +3393,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
 
     function mergeCloudCart(row) {
       const remoteCart = row && row.cart && typeof row.cart === "object" ? row.cart : {};
+      const localCart = cart && typeof cart === "object" && !Array.isArray(cart) ? cart : {};
       const localMeta = readCartMeta();
       const remoteTime = Date.parse(row.updated_at || "") || 0;
       const localTime = Date.parse(localMeta.updatedAt || "") || 0;
       const remoteWins = remoteTime > localTime;
-      cart = remoteWins ? { ...cart, ...remoteCart } : { ...remoteCart, ...cart };
+      cart = remoteWins ? { ...remoteCart } : { ...localCart };
       if (row.selected_client_code && (remoteWins || !selectedClientCode)) {
         selectedClientCode = String(row.selected_client_code);
         localStorage.setItem(clientKey, selectedClientCode);
@@ -3400,10 +3406,12 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       }
       localStorage.setItem(
         cartMetaKey,
-        JSON.stringify({ updatedAt: new Date(Math.max(remoteTime, localTime, Date.now())).toISOString() }),
+        JSON.stringify({ updatedAt: new Date(remoteWins ? remoteTime : Math.max(localTime, Date.now())).toISOString() }),
       );
       saveCart({ skipCloud: true, keepTimestamp: true });
-      scheduleCloudCartSync({ immediate: true });
+      if (!remoteWins) {
+        scheduleCloudCartSync({ immediate: true });
+      }
     }
 
     function scheduleCloudCartSync(options = {}) {
@@ -3414,10 +3422,10 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         window.clearTimeout(cloudSaveTimer);
       }
       if (options.immediate) {
-        syncCloudCart();
-        return;
+        return syncCloudCart();
       }
       cloudSaveTimer = window.setTimeout(syncCloudCart, 900);
+      return null;
     }
 
     async function syncCloudCart() {
