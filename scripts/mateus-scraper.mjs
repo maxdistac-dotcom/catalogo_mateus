@@ -2291,7 +2291,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     }
     .cart-row {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) 84px 116px auto;
+      grid-template-columns: minmax(220px, 1fr) auto 64px;
       gap: 8px;
       align-items: center;
       padding: 10px;
@@ -2311,6 +2311,31 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       color: var(--muted);
       font-size: 12px;
       margin-top: 3px;
+    }
+    .cart-editors {
+      display: grid;
+      grid-template-columns: 84px 116px auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .cart-thumb {
+      width: 58px;
+      height: 58px;
+      justify-self: end;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #eef2f7;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cart-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #fff;
     }
     .cart-total {
       display: flex;
@@ -2402,6 +2427,9 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         grid-column: 1 / -1;
         order: 3;
       }
+      body:not([data-active-view="products"]) #search {
+        display: none;
+      }
       .tabs {
         grid-column: 1 / -1;
         order: 4;
@@ -2463,15 +2491,27 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         display: inline;
       }
       .cart-row {
-        grid-template-columns: minmax(0, 1fr) 76px 88px 42px;
+        grid-template-columns: minmax(0, 1fr) 68px;
         gap: 6px;
         padding: 8px;
       }
       .cart-name {
-        grid-column: 1 / -1;
+        grid-column: 1;
       }
-      .cart-row input {
+      .cart-editors {
+        grid-column: 1;
+        grid-template-columns: minmax(64px, 1fr) minmax(76px, 1fr) 42px;
+        gap: 6px;
+      }
+      .cart-editors input {
         padding: 8px;
+      }
+      .cart-thumb {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        width: 64px;
+        height: 64px;
+        align-self: start;
       }
       .cart-row button[data-remove-key] {
         width: 42px;
@@ -2534,7 +2574,14 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         grid-column: auto;
       }
       .cart-row {
-        grid-template-columns: minmax(0, 1fr) 70px 82px 40px;
+        grid-template-columns: minmax(0, 1fr) 62px;
+      }
+      .cart-editors {
+        grid-template-columns: minmax(58px, 1fr) minmax(70px, 1fr) 40px;
+      }
+      .cart-thumb {
+        width: 58px;
+        height: 58px;
       }
       .cart-total {
         justify-content: space-between;
@@ -3658,11 +3705,22 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       const qty = normalizeQty(item.qty, product);
       const price = item.negotiatedPrice ?? product.priceNumber;
       const maxAttr = product.maxQty ? ' max="' + product.maxQty + '"' : "";
+      const image = product.localImage || product.image || "";
+      const fallbackImage = product.localImage && product.image && product.localImage !== product.image ? product.image : "";
+      const fallbackAttr = fallbackImage
+        ? ' data-fallback-src="' + escapeText(fallbackImage) + '" onerror="if (this.dataset.fallbackSrc) { this.onerror = null; this.src = this.dataset.fallbackSrc; }"'
+        : "";
+      const thumb = image
+        ? '<div class="cart-thumb"><img loading="lazy" src="' + escapeText(image) + '" alt="' + escapeText(product.name) + '"' + fallbackAttr + '></div>'
+        : '<div class="cart-thumb"></div>';
       return '<div class="cart-row">'
         + '<div class="cart-name"><strong>' + escapeText(product.name) + '</strong><span>SKU: ' + escapeText(product.sku || "-") + ' | Min: ' + product.minQty + ' | Estoque: ' + escapeText(product.stock || String(product.stockNumber || "-")) + '</span></div>'
+        + '<div class="cart-editors">'
         + '<input data-cart-qty="' + escapeText(entry.key) + '" type="number" min="' + product.minQty + '" step="' + product.minQty + '"' + maxAttr + ' value="' + qty + '">'
         + '<input data-cart-price="' + escapeText(entry.key) + '" type="text" inputmode="decimal" value="' + (price == null ? "" : formatMoney(price)) + '">'
         + '<button type="button" class="danger" data-remove-key="' + escapeText(entry.key) + '">Remover</button>'
+        + '</div>'
+        + thumb
         + '</div>';
     }
 
