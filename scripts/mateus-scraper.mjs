@@ -2700,8 +2700,18 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
             unlockCatalog(savedClientSession.clients, { saveSession: false, syncCloud: true });
             return;
           }
+          const cloudClients = await loadCloudClientBase();
+          if (cloudClients.length) {
+            unlockCatalog(cloudClients, {
+              saveSession: true,
+              email: supabaseSession.user?.email || authEmail,
+              syncCloud: true,
+              skipClientBaseUpload: true,
+            });
+            return;
+          }
           setupAuthGate();
-          showPwaStatus("Sessao Supabase ativa. Entre uma vez para desbloquear a base de clientes neste aparelho.");
+          showPwaStatus("Sessao Supabase ativa. Abra o catalogo uma vez no aparelho que ja tem a base para sincronizar os clientes.");
           return;
         }
         setupAuthGate();
@@ -2753,9 +2763,23 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
             decrypted = await decryptClientBase(loginBase, passwordInput.value);
           } catch (decryptError) {
             console.error(decryptError);
-            error.textContent = supabaseEnabled
-              ? "Login aceito no Supabase, mas essa senha nao abriu a base de clientes salva no catalogo."
-              : "Email ou senha incorretos.";
+            if (supabaseEnabled) {
+              const cloudClients = await loadCloudClientBase({ showError: false });
+              if (cloudClients.length) {
+                unlockCatalog(cloudClients, {
+                  saveSession: true,
+                  email: emailValue || authEmail,
+                  syncCloud: true,
+                  skipClientBaseUpload: true,
+                });
+                passwordInput.value = "";
+                return;
+              }
+              error.textContent =
+                "Login aceito no Supabase, mas a base de clientes ainda nao esta sincronizada. Abra uma vez no aparelho que ja entra no catalogo.";
+            } else {
+              error.textContent = "Email ou senha incorretos.";
+            }
             return;
           }
           unlockCatalog(decrypted.clients || decrypted, {
@@ -2782,6 +2806,9 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         saveAuthSession(options.email || authEmail);
       }
       if (options.syncCloud && supabaseEnabled && supabaseSession) {
+        if (!options.skipClientBaseUpload) {
+          syncCloudClientBase();
+        }
         initializeCloudCart();
       }
       registerOfflineCache();
@@ -3279,6 +3306,60 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         return JSON.parse(localStorage.getItem(cartMetaKey) || "{}");
       } catch {
         return {};
+      }
+    }
+
+    async function loadCloudClientBase(options = {}) {
+      if (!supabaseEnabled || !supabaseSession?.user?.id) {
+        return [];
+      }
+      if (navigator.onLine === false) {
+        if (options.showError !== false) {
+          showPwaStatus("Sem internet. Nao consegui carregar a base de clientes do Supabase.");
+        }
+        return [];
+      }
+      try {
+        const rows = await supabaseRestRequest(
+          "/cart_states?user_id=eq." + encodeURIComponent(supabaseSession.user.id) + "&select=client_base",
+        );
+        const clientBase = rows && rows[0] && rows[0].client_base;
+        const loadedClients = clientBase && Array.isArray(clientBase.clients) ? clientBase.clients : Array.isArray(clientBase) ? clientBase : [];
+        return mergeBrowserClients(loadedClients);
+      } catch (error) {
+        console.error(error);
+        if (options.showError !== false) {
+          showPwaStatus("Nao consegui carregar a base de clientes do Supabase. Rode o setup.sql atualizado.");
+        }
+        return [];
+      }
+    }
+
+    async function syncCloudClientBase() {
+      if (!supabaseEnabled || !supabaseSession?.user?.id || !clients.length) {
+        return;
+      }
+      if (navigator.onLine === false) {
+        return;
+      }
+      try {
+        await supabaseRestRequest("/cart_states?on_conflict=user_id", {
+          method: "POST",
+          headers: {
+            Prefer: "resolution=merge-duplicates",
+          },
+          body: {
+            user_id: supabaseSession.user.id,
+            client_base: {
+              clients,
+              updated_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+          },
+        });
+      } catch (error) {
+        console.error(error);
+        showPwaStatus("Nao consegui enviar a base de clientes ao Supabase. Rode o setup.sql atualizado.");
       }
     }
 

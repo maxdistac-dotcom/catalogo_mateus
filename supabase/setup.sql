@@ -7,6 +7,9 @@ create table if not exists public.cart_states (
 
 alter table public.cart_states enable row level security;
 
+alter table public.cart_states
+add column if not exists client_base jsonb;
+
 drop policy if exists "Ler proprio carrinho" on public.cart_states;
 create policy "Ler proprio carrinho"
 on public.cart_states
