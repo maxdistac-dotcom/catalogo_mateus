@@ -76,7 +76,7 @@ jobs:
 
       - name: Install Playwright
         run: |
-          npm install --no-save playwright@latest
+          npm install --no-save playwright@latest pdfjs-dist@latest
           npx playwright install --with-deps chromium
 
       - name: Scrape Mateus Mais

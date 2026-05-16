@@ -81,6 +81,7 @@ Recursos:
 - aplicar preço por linha de produto, por exemplo `Havaianas Brasil` com `33,50`;
 - sugerir automaticamente o preço da linha digitada quando já houver item correspondente no carrinho;
 - exportar uma planilha `.xlsx` do carrinho no modelo `sku` e `quantidade` para importação no site real;
+- importar o PDF de carrinho exportado pelo site real, trazendo SKU, quantidade e preço negociado para os itens que existem no catálogo atual;
 - gerar automaticamente o texto de solicitação:
 
 ```text

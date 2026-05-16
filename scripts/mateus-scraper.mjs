@@ -1452,6 +1452,7 @@ async function writeOutputs(config, products, meta) {
   await fs.mkdir(imagesDir, { recursive: true });
   console.log("Gerando arquivos...");
   await cacheImages(products, imagesDir, config);
+  await installPdfJsAssets(runDir);
 
   const encryptedClientBase = await readEncryptedClientBase(config);
   const clients = encryptedClientBase ? [] : normalizeClients(meta.clients || []);
@@ -1523,9 +1524,37 @@ async function publishLatest(outputRoot, runDir, runFiles) {
   await fs.copyFile(runFiles.serviceWorker, path.join(outputRoot, "sw.js"));
   await fs.copyFile(runFiles.icon, path.join(outputRoot, "icon.svg"));
 
+  const latestPdfJsDir = path.join(outputRoot, "pdfjs");
+  await fs.rm(latestPdfJsDir, { recursive: true, force: true });
+  await copyDirectory(path.join(runDir, "pdfjs"), latestPdfJsDir);
+
   const latestImagesDir = path.join(outputRoot, "imagens");
   await fs.rm(latestImagesDir, { recursive: true, force: true });
   await copyDirectory(path.join(runDir, "imagens"), latestImagesDir);
+}
+
+async function installPdfJsAssets(runDir) {
+  const sourceDir = await resolvePdfJsBuildDir();
+  const targetDir = path.join(runDir, "pdfjs");
+  await fs.mkdir(targetDir, { recursive: true });
+  for (const filename of ["pdf.min.mjs", "pdf.worker.min.mjs"]) {
+    await fs.copyFile(path.join(sourceDir, filename), path.join(targetDir, filename));
+  }
+}
+
+async function resolvePdfJsBuildDir() {
+  const attempts = [
+    path.join(PROJECT_ROOT, "node_modules", "pdfjs-dist", "legacy", "build"),
+    path.join(BUNDLED_NODE_MODULES, "pdfjs-dist", "legacy", "build"),
+  ];
+
+  for (const candidate of attempts) {
+    if (fsSync.existsSync(path.join(candidate, "pdf.min.mjs"))) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Nao encontrei pdfjs-dist. Instale com `npm install --no-save pdfjs-dist` antes de gerar o catalogo.");
 }
 
 async function copyDirectory(source, target) {
@@ -2388,6 +2417,8 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
         <h2>Carrinho fictício (<span id="cartCount">0</span>)</h2>
         <div class="cart-actions">
           <button id="exportImportCart" type="button" class="secondary">Exportar planilha</button>
+          <button id="importCartPdf" type="button" class="secondary">Importar PDF</button>
+          <input id="importCartPdfFile" type="file" accept="application/pdf,.pdf" class="hidden">
           <button id="clearCart" type="button" class="danger">Limpar</button>
         </div>
       </div>
@@ -2432,6 +2463,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     const sections = Array.from(document.querySelectorAll("section[data-group]"));
     const products = JSON.parse(document.getElementById("products-data").textContent);
     const productsByKey = new Map(products.map((product) => [product.cartKey, product]));
+    const productsBySku = new Map(products.filter((product) => product.sku).map((product) => [String(product.sku), product]));
     let clients = JSON.parse(document.getElementById("clients-data").textContent);
     let clientsByCode = new Map(clients.map((client) => [client.code, client]));
     const encryptedClientBase = JSON.parse(document.getElementById("encrypted-clients-data").textContent);
@@ -2447,6 +2479,8 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     const cartTotalQty = document.getElementById("cartTotalQty");
     const cartTotalValue = document.getElementById("cartTotalValue");
     const requestText = document.getElementById("requestText");
+    const importCartPdfButton = document.getElementById("importCartPdf");
+    const importCartPdfFile = document.getElementById("importCartPdfFile");
     const clientSearch = document.getElementById("clientSearch");
     const clientOptions = document.getElementById("clientOptions");
     const clientHint = document.getElementById("clientHint");
@@ -2457,6 +2491,7 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     const pwaStatus = document.getElementById("pwaStatus");
     let cart = readCart();
     let selectedClientCode = localStorage.getItem(clientKey) || "";
+    let pdfJsLibPromise = null;
 
     document.querySelectorAll("[data-view-target]").forEach((button) => {
       button.addEventListener("click", () => setActiveView(button.dataset.viewTarget));
@@ -2524,6 +2559,17 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
     });
 
     document.getElementById("exportImportCart").addEventListener("click", exportImportCart);
+    if (importCartPdfButton && importCartPdfFile) {
+      importCartPdfButton.addEventListener("click", () => importCartPdfFile.click());
+      importCartPdfFile.addEventListener("change", () => {
+        const file = importCartPdfFile.files && importCartPdfFile.files[0];
+        if (file) {
+          importCartFromPdf(file).finally(() => {
+            importCartPdfFile.value = "";
+          });
+        }
+      });
+    }
 
     linePattern.addEventListener("input", () => {
       const suggested = suggestedPriceForLine(linePattern.value);
@@ -3020,6 +3066,105 @@ function buildCatalogHtml(config, products, summary, generatedAt, meta = {}, enc
       ].join("\\n");
     }
 
+    async function importCartFromPdf(file) {
+      try {
+        showPwaStatus("Lendo PDF do carrinho...");
+        const rows = await parseCartPdf(file);
+        if (!rows.length) {
+          showPwaStatus("Nao encontrei itens de carrinho nesse PDF.");
+          return;
+        }
+
+        let imported = 0;
+        const missing = [];
+        for (const row of rows) {
+          const product = productsBySku.get(String(row.sku));
+          if (!product) {
+            missing.push(row);
+            continue;
+          }
+          const qty = normalizeQty(row.qty, product);
+          cart[product.cartKey] = {
+            qty,
+            negotiatedPrice: row.price ?? product.priceNumber,
+          };
+          imported += 1;
+        }
+
+        saveCart();
+        setActiveView("cart");
+        const message = missing.length
+          ? imported + " item(ns) importados. " + missing.length + " SKU(s) nao estao no catalogo atual."
+          : imported + " item(ns) importados do PDF.";
+        showPwaStatus(message);
+        if (missing.length) {
+          console.warn("SKUs do PDF nao encontrados no catalogo atual:", missing);
+        }
+      } catch (error) {
+        console.error(error);
+        const localFileMessage = window.location.protocol === "file:"
+          ? " Abra pelo link do GitHub Pages para importar PDF."
+          : "";
+        showPwaStatus("Nao consegui importar esse PDF." + localFileMessage);
+      }
+    }
+
+    async function parseCartPdf(file) {
+      const pdfjsLib = await loadPdfJs();
+      const data = new Uint8Array(await file.arrayBuffer());
+      const loadingTask = pdfjsLib.getDocument({ data });
+      const pdf = await loadingTask.promise;
+      const rows = [];
+      const seen = new Set();
+
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const items = content.items
+          .map((item) => ({
+            text: String(item.str || "").trim(),
+            x: Number(item.transform && item.transform[4]) || 0,
+            y: Number(item.transform && item.transform[5]) || 0,
+          }))
+          .filter((item) => item.text);
+
+        for (const item of items) {
+          if (!/^\\d{4,8}$/.test(item.text) || item.x < 90 || item.x > 165) {
+            continue;
+          }
+          const lineItems = items.filter((candidate) => Math.abs(candidate.y - item.y) <= 3);
+          const qtyItem = lineItems.find((candidate) => candidate.x >= 430 && candidate.x <= 510 && /^\\d+$/.test(candidate.text));
+          const priceItem = lineItems.find((candidate) => candidate.x >= 520 && candidate.x <= 620 && /R\\$\\s*[\\d.,]+/.test(candidate.text));
+          if (!qtyItem) {
+            continue;
+          }
+          const sku = item.text;
+          const key = pageNumber + ":" + sku + ":" + Math.round(item.y);
+          if (seen.has(key)) {
+            continue;
+          }
+          seen.add(key);
+          rows.push({
+            sku,
+            qty: Number(qtyItem.text) || 1,
+            price: priceItem ? parseMoney(priceItem.text) : null,
+          });
+        }
+      }
+
+      return rows;
+    }
+
+    async function loadPdfJs() {
+      if (!pdfJsLibPromise) {
+        pdfJsLibPromise = import("./pdfjs/pdf.min.mjs").then((pdfjsLib) => {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = "./pdfjs/pdf.worker.min.mjs";
+          return pdfjsLib;
+        });
+      }
+      return pdfJsLibPromise;
+    }
+
     function exportImportCart() {
       const entries = cartEntries();
       if (!entries.length) {
@@ -3505,6 +3650,8 @@ function buildServiceWorker(products, generatedAt, config = {}) {
     "resumo.txt",
     "manifest.webmanifest",
     "icon.svg",
+    "pdfjs/pdf.min.mjs",
+    "pdfjs/pdf.worker.min.mjs",
     ...localImages,
   ];
   const cacheName = `mateus-catalogo-${generatedAt.toISOString().replace(/[^0-9]/g, "").slice(0, 12)}`;
