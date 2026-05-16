@@ -1588,27 +1588,32 @@ async function publishLatest(outputRoot, runDir, runFiles) {
 }
 
 async function installPdfJsAssets(runDir) {
-  const sourceDir = await resolvePdfJsBuildDir();
+  const pdfJsFiles = await resolvePdfJsBuildFiles();
   const targetDir = path.join(runDir, "pdfjs");
   await fs.mkdir(targetDir, { recursive: true });
-  for (const filename of ["pdf.min.mjs", "pdf.worker.min.mjs"]) {
-    await fs.copyFile(path.join(sourceDir, filename), path.join(targetDir, filename));
-  }
+  await fs.copyFile(pdfJsFiles.main, path.join(targetDir, "pdf.min.mjs"));
+  await fs.copyFile(pdfJsFiles.worker, path.join(targetDir, "pdf.worker.min.mjs"));
 }
 
-async function resolvePdfJsBuildDir() {
+async function resolvePdfJsBuildFiles() {
   const attempts = [
     path.join(PROJECT_ROOT, "node_modules", "pdfjs-dist", "legacy", "build"),
+    path.join(PROJECT_ROOT, "node_modules", "pdfjs-dist", "build"),
     path.join(BUNDLED_NODE_MODULES, "pdfjs-dist", "legacy", "build"),
+    path.join(BUNDLED_NODE_MODULES, "pdfjs-dist", "build"),
   ];
 
   for (const candidate of attempts) {
-    if (fsSync.existsSync(path.join(candidate, "pdf.min.mjs"))) {
-      return candidate;
+    const main = ["pdf.min.mjs", "pdf.mjs"].map((filename) => path.join(candidate, filename)).find((file) => fsSync.existsSync(file));
+    const worker = ["pdf.worker.min.mjs", "pdf.worker.mjs"].map((filename) => path.join(candidate, filename)).find((file) => fsSync.existsSync(file));
+    if (main && worker) {
+      return { main, worker };
     }
   }
 
-  throw new Error("Nao encontrei pdfjs-dist. Instale com `npm install --no-save pdfjs-dist` antes de gerar o catalogo.");
+  throw new Error(
+    "Nao encontrei os arquivos do pdfjs-dist. Instale com `npm install --no-save pdfjs-dist` antes de gerar o catalogo.",
+  );
 }
 
 async function copyDirectory(source, target) {
